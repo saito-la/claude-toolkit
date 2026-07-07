@@ -119,6 +119,7 @@ def main() -> None:
     ap.add_argument("--margin", default="20mm", help="ページ余白（4辺均等、既定 20mm）")
     ap.add_argument("--title", default=None, help="ブラウザタブ/PDFメタ用タイトル（本文H1とは別。可視タイトルは二重表示しない）")
     ap.add_argument("--no-page-numbers", action="store_true", help="下中央のページ番号を付けない")
+    ap.add_argument("--style", default=None, help="適用するCSSファイルを明示指定（兄弟<stem>.style.html自動検出より優先。combine-pdfs.py等の外部ツールから使用）")
     args = ap.parse_args()
 
     src = Path(args.input).expanduser().resolve()
@@ -132,10 +133,23 @@ def main() -> None:
         css = Path(td) / "style.html"
         css.write_text(CSS_TEMPLATE.replace("__MARGIN__", args.margin), encoding="utf-8")
         html = Path(td) / "doc.html"
+        # 既定CSSに続けて、入力と同名の兄弟 <stem>.style.html があれば追加include。
+        # 後勝ちで既定を上書きできる＝文書固有のスタイルをCSSファイルに集約できる。
+        includes = [f"--include-in-header={css}"]
+        if args.style:
+            extra_css = Path(args.style).expanduser().resolve()
+            if not extra_css.exists():
+                print(f"ERROR: --style {extra_css} が見つかりません", file=sys.stderr)
+                sys.exit(1)
+            includes.append(f"--include-in-header={extra_css}")
+        else:
+            sibling_css = src.with_name(src.stem + ".style.html")
+            if sibling_css.exists():
+                includes.append(f"--include-in-header={sibling_css}")
         # pandoc: md → standalone HTML（CSSを<head>へ、pagetitleのみ設定＝可視タイトル二重化を回避）
         r = subprocess.run(
             ["pandoc", str(src), "-f", "markdown+autolink_bare_uris", "-s",
-             f"--include-in-header={css}",
+             *includes,
              "-M", f"pagetitle={pagetitle}", "-o", str(html)],
             capture_output=True, text=True)
         if r.returncode != 0:

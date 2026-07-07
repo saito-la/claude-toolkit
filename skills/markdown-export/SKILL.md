@@ -30,6 +30,20 @@ python3 <このSKILL.mdのディレクトリ>/scripts/md2pdf.py input.md --margi
 
 pandoc → 整形HTML → Chrome印刷 → ページ番号スタンプ、の3段パイプライン。A4・上下左右2cm均等・本文全幅・内容依存の表列幅・クリック可能なURL・下中央のページ番号「n / N」が既定の仕上がり。
 
+## 複数md結合PDF
+
+複数のmdファイルをそれぞれPDF化したうえで、表紙・目次・PDFしおり（ブックマーク）・通しページ番号付きの1冊に束ねたい場合（調査ダイジェスト集・添付資料集の分冊など）は `scripts/combine-pdfs.py` を使う。pandoc直呼び禁止と同じ理由で、複数PDFのマージ手順もその場限りのワンオフでなく本スクリプト経由に統一する。
+
+```bash
+python3 <このSKILL.mdのディレクトリ>/scripts/combine-pdfs.py \
+    -o out.pdf --title "海外制度調査 参考資料集" --subtitle "米国編" \
+    --author "東京大学医学部附属病院 臨床研究推進センター" --date "2026-07-07" \
+    --style digest.style.html \
+    us-nci-cancer-centers.md us-nci-nctn.md us-ctsa.md ...
+```
+
+各mdの1行目 `# 見出し` をタイトルとして自動取得し、表紙に目次（開始頁付き）、本文にPDFしおり（既定で「資料1　タイトル」形式）を生成する。本文側のH1は書き換えない（しおりのみに資料番号を付与）。`--style` を渡すと全パート・表紙に同一CSSを強制適用できる（`--no-cover` で表紙・目次生成を省略し単純結合のみも可能）。
+
 ## 依存関係
 
 ```bash
@@ -48,5 +62,6 @@ PDF生成には Google Chrome（等の Chromium系ブラウザ）も必要。
 - PDFタイトルが二重表示 → pandoc `-s` の `title` はタイトルブロックを描く。`-M pagetitle=` のみ設定し本文H1と二重化させない（md2pdf）。
 - PDFにページ番号が付けにくい → Chrome `--print-to-pdf` はヘッダ/フッタ制御が弱い。`--no-pdf-header-footer` で既定の日付/URLを消し、PyMuPDF(fitz)で「n / N」を後段スタンプ（md2pdf）。
 - URLがクリックできない → pandoc標準は `<url>` 形式しかリンク化せず、単独行の裸URLは素通し。`-f markdown+autolink_bare_uris` で裸URLも `<a href>` 化する（md2pdf）。
+- 文書固有のスタイルを足したい → 入力と同名の兄弟ファイル `<入力>.style.html`（例: `foo.md` → `foo.style.html`）を置くと、既定CSSの**後**に追加include され、後勝ちで上書きできる。無ければ従来どおり既定CSSのみ（md2pdf）。
 - Wordの表罫線が透明 → テンプレの表スタイル枠線が透明。`tblBorders`（濃い灰色0.75pt）を明示付与（md2docx）。
 - Wordで「(1)(2)…」の箇条書きが空の中黒＋入れ子番号に割れる → 半角丸括弧数字をpandocがファンシー順序リストと誤認するため。箇条書きの番号ラベルは全角「（1）」を使う。
