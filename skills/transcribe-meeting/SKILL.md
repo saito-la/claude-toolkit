@@ -52,7 +52,7 @@ python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py \
 
 - **長尺（既定15分超）は自動で分割モードに直行**（チャンク10分）。短い音声は単一ファイルで試し、品質不良なら分割へ切替。
 - 各チャンクは **`check_quality`**（同一文字連続・**文/段落の反復ループ**・**尺に対する文字数不足＝途切れ**・短行過多）で検査し、失格なら **再試行 → モデル格上げ（flash→pro）→ 半分に再分割** で回復する。
-- 文字起こしモデルは既定 **`gemini-2.5-pro`**（長尺・複数話者のダイアライゼーション精度が高い）。高速・低コスト優先なら `--fast`。
+- 文字起こしモデルは既定 **`gemini-2.5-flash`**（高速・低コスト優先）。品質不良時は自動で `gemini-2.5-pro` に格上げして再試行する。精度優先で最初から pro を使いたい場合は `--model gemini-2.5-pro`。
 - `--no-derive` を付け、**話者比定（Step 3）を済ませてから** verbatim/summary を生成する（Step 4）。
 - 各 Gemini 呼び出しのトークン消費は `<stem>_usage.json` に記録される。
 
@@ -142,8 +142,7 @@ open <stem>_transcript.txt <stem>_verbatim.txt <stem>_summary.md
 | `--context <file>` | 固有名詞・発言者候補を注入（誤認識抑制） |
 | `--no-derive` | 文字起こしのみ（比定後に `--derive-only` で派生生成） |
 | `--derive-only <transcript>` | 既存トランスクリプトから verbatim/summary だけ再生成 |
-| `--fast` | 文字起こしを `gemini-2.5-flash` で（高速・低コスト） |
-| `--model <name>` | 文字起こしモデル指定（既定 `gemini-2.5-pro`） |
+| `--model <name>` | 文字起こしモデル指定（既定 `gemini-2.5-flash`。精度優先なら `gemini-2.5-pro`） |
 | `--split` / `--chunk-minutes N` | 分割強制／チャンク長変更 |
 
 ## 初回セットアップ
