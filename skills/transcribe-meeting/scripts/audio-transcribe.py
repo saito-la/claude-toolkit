@@ -15,7 +15,7 @@
   audio-transcribe.py <音声> --model gemini-2.5-pro  # 精度優先でproを使う
 """
 
-import argparse, json, os, re, subprocess, sys, time
+import argparse, datetime as _dt, json, os, re, shutil, subprocess, sys, time
 from collections import Counter
 from pathlib import Path
 
@@ -38,6 +38,16 @@ PRICING = {
     "gemini-2.5-pro":   {"in": 1.25, "out": 10.0},
     "gemini-2.5-flash": {"in": 0.30, "out": 2.50},
 }
+
+# 無料枠の1日リクエスト数（RPD）の目安。Google が随時改定するため正本ではない
+# （2026年に 20→250→1,500 と変動報告あり）。正確な残枠は Google AI Studio のダッシュボードで確認する。
+# 環境変数 GEMINI_FLASH_RPD / GEMINI_PRO_RPD、または --rpd で上書き可。
+FREE_TIER_RPD = {
+    "gemini-2.5-flash": int(os.environ.get("GEMINI_FLASH_RPD", "250")),
+    "gemini-2.5-pro":   int(os.environ.get("GEMINI_PRO_RPD", "100")),
+}
+# 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）
+DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.json"
 
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
@@ -87,6 +97,55 @@ def _record_quality(name: str, duration_sec, text: str, ok: bool, reason: str,
     })
 
 
+def _pt_date() -> str:
+    """太平洋時間の日付 YYYY-MM-DD（Google 無料枠のリセット基準＝PT 0時）。"""
+    now_utc = _dt.datetime.now(_dt.timezone.utc)
+    try:
+        from zoneinfo import ZoneInfo
+        return now_utc.astimezone(ZoneInfo("America/Los_Angeles")).strftime("%Y-%m-%d")
+    except Exception:                        # tzdata 無し等：夏時間(PDT=UTC-7)近似
+        return (now_utc - _dt.timedelta(hours=7)).strftime("%Y-%m-%d")
+
+
+def _bump_daily_tally(model: str, tokens: int) -> None:
+    """当ツールの1リクエストを PT 日付・モデル別に積算する（他アプリの消費は含まない）。"""
+    try:
+        DAILY_TALLY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if DAILY_TALLY_PATH.exists():
+            data = json.loads(DAILY_TALLY_PATH.read_text(encoding="utf-8"))
+        m = data.setdefault(_pt_date(), {}).setdefault(model, {"requests": 0, "tokens": 0})
+        m["requests"] += 1
+        m["tokens"] += int(tokens or 0)
+        for old in sorted(data)[:-14]:       # 直近14日ぶんだけ保持
+            data.pop(old, None)
+        DAILY_TALLY_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except (OSError, ValueError):
+        pass
+
+
+def write_daily_tally_report() -> None:
+    """本日（PT基準）当ツールが消費した無料枠の目安を表示する。"""
+    try:
+        data = json.loads(DAILY_TALLY_PATH.read_text(encoding="utf-8")) if DAILY_TALLY_PATH.exists() else {}
+    except (OSError, ValueError):
+        return
+    day = _pt_date()
+    today = data.get(day, {})
+    if not today:
+        return
+    print(f"\n── 無料枠の本日消費（ローカル集計・太平洋時間 {day} 基準） ──")
+    for model, m in sorted(today.items()):
+        rpd = FREE_TIER_RPD.get(model)
+        req = m["requests"]
+        if rpd:
+            print(f"  {model:<20}本日 {req} リクエスト / 目安 {rpd}（残り約 {max(0, rpd - req)}）"
+                  f"  累計トークン {m['tokens']:,}")
+        else:
+            print(f"  {model:<20}本日 {req} リクエスト  累計トークン {m['tokens']:,}")
+    print("  ※ 当ツール経由の集計。RPD目安はGoogleが随時改定するため、正確な残枠は Google AI Studio で確認。")
+
+
 class QuotaExhaustedError(RuntimeError):
     """無料枠の1日リクエスト上限に達した（当日中は再実行しても回復しない）。上位で明確に案内して停止する。"""
 
@@ -128,6 +187,9 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
             t0 = time.time()
             resp = client.models.generate_content(**kwargs)
             _record_usage(stage, kwargs.get("model", ""), resp, time.time() - t0)
+            um = getattr(resp, "usage_metadata", None)
+            _bump_daily_tally(kwargs.get("model", ""),
+                              getattr(um, "total_token_count", 0) if um else 0)
             return resp
         except (errors.ServerError, errors.ClientError) as e:
             code = getattr(e, "code", None)
@@ -242,6 +304,7 @@ def write_usage_report(out_dir: Path, stem: str):
     print(f"\n── 所要時間 ──")
     print(f"  総経過 {_fmt_dur(elapsed)}（うち Gemini 応答待ち {_fmt_dur(api_sec)}）")
     write_quality_report()
+    write_daily_tally_report()
     print(f"\n  レポート保存: {path.name}")
     return path
 
@@ -476,8 +539,10 @@ def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
     if not chunks:
         raise FileNotFoundError("音声チャンクが見つかりません")
     n = len(chunks)
+    rpd = FREE_TIER_RPD.get(model)
+    rpd_note = f"無料枠RPD目安 {rpd}回/日（PT基準・要確認）。" if rpd else ""
     print(f"{n} チャンクを処理します"
-          f"（推定リクエスト数 約{n}〜{n * 2}回。無料枠は {model} 20回/日。"
+          f"（推定リクエスト数 約{n}〜{n * 2}回。{rpd_note}"
           f"済チャンクはキャッシュ再利用）")
     parts, covered = [], 0.0
     for i, chunk in enumerate(chunks):
@@ -528,6 +593,48 @@ def _summary_marker_style(text: str) -> str:
 
 SUMMARY_LEGEND = ("> 話者比定の確度：無印＝確実／○＝推定（高）／△＝推定（低）／？＝不明。"
                   "自動文字起こしからの校正物であり確定議事録ではない。\n\n")
+
+
+def organize_outputs(out_dir: Path, stem: str, audio: Path = None) -> Path:
+    """成果物を整理する：`<stem>_summary.md` だけを直下に残し、音声・チャンク・
+    中間txt（transcript/verbatim）・usage.json を `<out_dir>/<stem>/` に一括する。破壊しない（移動のみ）。"""
+    dest = out_dir / stem
+    moved = []
+
+    def _move(src: Path):
+        if not src.exists():
+            return
+        tgt = dest / src.name
+        if src.resolve() == tgt.resolve():
+            return
+        dest.mkdir(exist_ok=True)
+        if tgt.exists():                     # 再実行時は古い同名を置き換え
+            shutil.rmtree(tgt) if tgt.is_dir() else tgt.unlink()
+        shutil.move(str(src), str(tgt))
+        moved.append(src.name)
+
+    for suffix in ("_transcript.txt", "_verbatim.txt", "_usage.json"):
+        _move(out_dir / f"{stem}{suffix}")
+    search = {out_dir}
+    if audio:
+        search.add(audio.parent)
+    for base in search:                      # チャンク作業ディレクトリ（byproduct）
+        for pat in (f"{stem}_parts*", f"{stem}_sub*"):
+            for d in sorted(base.glob(pat)):
+                _move(d)
+        for ext in AUDIO_SUFFIXES:           # 直下に置かれた音声
+            _move(base / f"{stem}{ext}")
+    if audio and audio.exists():             # 入力音声（別ディレクトリでも）を <stem> 名で格納
+        dest.mkdir(exist_ok=True)
+        tgt = dest / f"{stem}{audio.suffix}"
+        if audio.resolve() != tgt.resolve():
+            if tgt.exists():
+                tgt.unlink()
+            shutil.move(str(audio), str(tgt))
+            moved.append(audio.name)
+    if moved:
+        print(f"\n成果物を整理: {stem}_summary.md を直下に残し、{len(moved)}件を {dest.name}/ に一括")
+    return dest
 
 
 def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
@@ -602,12 +709,19 @@ def main():
                    help=f"分割時のチャンク長（分）。デフォルト: {DEFAULT_CHUNK_MIN}")
     p.add_argument("--split", action="store_true", help="最初から分割モードで実行")
     p.add_argument("--model", default=TRANSCRIBE_MODEL, help=f"文字起こしモデル。デフォルト: {TRANSCRIBE_MODEL}")
+    p.add_argument("--rpd", type=int, metavar="N",
+                   help="無料枠の1日リクエスト数（RPD）目安を上書き（本日消費表示用。既定 flash=250）")
     p.add_argument("--context", help="固有名詞・発言者候補を書いたテキストファイル（プロンプトに注入）")
     p.add_argument("--no-derive", action="store_true", help="verbatim/summary を生成しない（文字起こしのみ）")
     p.add_argument("--derive-only", metavar="TRANSCRIPT",
                    help="既存トランスクリプトから verbatim/summary だけ再生成する")
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
+    p.add_argument("--no-organize", action="store_true",
+                   help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
     a = p.parse_args()
+    if a.rpd:                                # RPD 目安を上書き（対象モデル＋既定 flash）
+        FREE_TIER_RPD[a.model] = a.rpd
+        FREE_TIER_RPD["gemini-2.5-flash"] = a.rpd
 
     if not a.api_key:
         sys.exit("エラー: Gemini API キーが未設定。環境変数 GEMINI_API_KEY を設定するか、"
@@ -633,7 +747,10 @@ def main():
                 pass
         v, s = derive_files(client, transcript, tpath.parent, stem)
         write_usage_report(tpath.parent, stem)
-        print(f"\n生成ファイル:\n  {v}\n  {s}")
+        if not a.no_organize:
+            organize_outputs(tpath.parent, stem)
+        print(f"\n生成ファイル:\n  {tpath.parent / (stem + '_summary.md')}"
+              f"\n  （他は {tpath.parent / stem}/ に格納）")
         return
 
     if a.gui or not a.audio:
@@ -695,11 +812,20 @@ def main():
         derive_files(client, result, out.parent, stem)
 
     write_usage_report(out.parent, stem)
+    # 整理（既定）：summary.md 以外（音声・チャンク・transcript/verbatim・usage）を <stem>/ に一括。
+    # --no-derive 時は summary が無い＝整理せず transcript を直下に残す（話者比定の作業用）。
+    organized = not a.no_derive and not a.no_organize
+    if organized:
+        organize_outputs(out.parent, stem, audio=target if target.is_file() else None)
     print("\n生成ファイル:")
-    print(f"  {out}")
-    if not a.no_derive:
-        print(f"  {out.parent / (stem + '_verbatim.txt')}")
+    if organized:
         print(f"  {out.parent / (stem + '_summary.md')}")
+        print(f"  （他は {out.parent / stem}/ に格納）")
+    else:
+        print(f"  {out}")
+        if not a.no_derive:
+            print(f"  {out.parent / (stem + '_verbatim.txt')}")
+            print(f"  {out.parent / (stem + '_summary.md')}")
 
 
 if __name__ == "__main__":
