@@ -1,6 +1,6 @@
 # claude-toolkit
 
-Claude Code用の汎用Skill集。個人情報・秘密情報を一切含まない、プロジェクト非依存のツール群。
+Claude Code用の汎用Skill集。プロジェクト非依存のツール群。
 
 ## 収録スキル
 
