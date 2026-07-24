@@ -55,7 +55,7 @@ PDF生成には Google Chrome（等の Chromium系ブラウザ）も必要。
 
 ## 設計メモ
 
-過去に踏んだ落とし穴とその対処を両スクリプトに内蔵済み：
+過去に踏んだ落とし穴とその対処を両スクリプト・同梱テンプレートに内蔵済み：
 
 - PDFの右余白が極端に広い → pandoc標準テンプレCSSの `body{max-width:36em;padding:50px}` が原因。`body{max-width:none;padding:0}` で上書きし全幅化（md2pdf）。
 - 表の行が無駄に高い／列が均等 → pandocが等幅の `<col>` を出力するため。`table-layout:auto` ＋ `col{width:auto!important}` で内容依存の列幅にする（md2pdf）。md2docx は表示幅比例で列幅を割り当てる。
@@ -65,3 +65,4 @@ PDF生成には Google Chrome（等の Chromium系ブラウザ）も必要。
 - 文書固有のスタイルを足したい → 入力と同名の兄弟ファイル `<入力>.style.html`（例: `foo.md` → `foo.style.html`）を置くと、既定CSSの**後**に追加include され、後勝ちで上書きできる。無ければ従来どおり既定CSSのみ（md2pdf）。
 - Wordの表罫線が透明 → テンプレの表スタイル枠線が透明。`tblBorders`（濃い灰色0.75pt）を明示付与（md2docx）。
 - Wordで「(1)(2)…」の箇条書きが空の中黒＋入れ子番号に割れる → 半角丸括弧数字をpandocがファンシー順序リストと誤認するため。箇条書きの番号ラベルは全角「（1）」を使う。
+- 見出し・箇条書きのない地の文だけのmd（メール文面等）をWord変換すると、段落間の余白が一切つかず全文が詰まって見える → pandocは本文の各段落に `BodyText`／先頭段落に `FirstParagraph` というスタイルIDを割り当てるが、テンプレート（reference-gothic.docx／reference-default.docx）側にはこの2スタイルの定義が無く、`Normal`スタイルの余白設定（あれば）も継承されない。docDefaultsにも既定の段落間隔が無いため、Word・QuickLook等どのビューアで開いても段落同士がベタ詰めになる。**テンプレートの `styles.xml` に `BodyText`・`FirstParagraph` を明示追加**（`Normal`をbasedOnにしつつ `w:spacing w:after="200"`＝10ptを直接指定、継承任せにしない）して解消（md2docx。2026-07-25、テンプレートは `templates/*.docx` を直接編集して修正済み・スクリプト側の変更なし）。生成物は見出し・表と違い一見して段落境界が分かりにくいため、**プレーンな地の文中心の文書は変換後に必ずQuickLook等で実際の見た目を確認する**（`qlmanage -t -s 1600 -o <出力先> <file>.docx` でPNG化しReadツールで目視確認できる）。
