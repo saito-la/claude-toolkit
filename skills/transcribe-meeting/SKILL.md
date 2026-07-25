@@ -19,9 +19,7 @@ description: 会議・打ち合わせの録音ファイルから議事録を作�
 
 設計上の要点：**長尺音声を1ファイルで丸投げすると、モデルが途中で同一段落の反復ループに陥り後半を丸ごと欠落させる**。これを防ぐため、一定長を超える音声は最初から分割し、チャンクごとに品質を検査して破綻を検知したら再試行・モデル格上げ・再分割で回復する。
 
-**無料枠と再実行の落とし穴**：Gemini API の無料枠は `gemini-2.5-flash` の1日リクエスト数（RPD）に上限がある（Googleが随時改定。2026年に 20→250→1,500 と変動報告あり。正確な残枠は Google AI Studio のダッシュボードで確認）。長尺は複数チャンク＝複数リクエストになるため、**失敗ジョブを丸ごと何度も再実行すると1日で枯渇する**。対策として、(1) 成功チャンクは `<chunk>.txt` にキャッシュし再実行時は再送信しない、(2) 日次上限(429 free tier)を検知したら当日は回復しないため即停止（`QuotaExhaustedError`・exit 2）、分次レート/503のみ限定リトライ、(3) 既定チャンクは15分。**429（quota）が出たら再実行せず、枠リセット（太平洋時間0時＝日本時間16時頃）を待つか billing を有効化する。** 環境変数に無料枠の `AQ.` 形式トークンが入っている場合があるので、恒久運用は billing 有効な `AIza…` キーを `~/.config/claude-toolkit/gemini-api-key` に置くのが確実。
-
-**無料枠の消費目安**：実行末尾に「本日消費（ローカル集計・太平洋時間基準）」を表示する。当ツール経由のリクエスト数・トークン数を `~/.config/claude-toolkit/gemini-usage.json` に PT 日付ごとに積算し、`本日 N / 目安RPD（残り約M）` を出す。RPD目安は既定 flash=250（`--rpd N` か環境変数 `GEMINI_FLASH_RPD` で上書き）。**他アプリが同じキーを使う場合はその分を含まない下限値**。API は残枠を返さないため、正確な残枠はダッシュボードで確認する。
+**429（quota）が出たら再実行しない。** 無料枠の日次上限は当日中に回復しないため、枠リセット（太平洋時間0時＝日本時間16時頃）を待つか billing を有効化する。成功チャンクはキャッシュされるので、再開しても再送信は起きない。無料枠の構造・本日消費のローカル集計・課金キーへの切り替えは `references/quota-and-billing.md`。
 
 ## 使い方
 
@@ -95,28 +93,21 @@ python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py \
 # 自動文字起こしの校正物であり確定議事録ではない。
 ```
 
-チャンク（`## Part N`）ごとに 話者A/B と実名の対応を決め、Python で一括置換する。未分離で1発言に複数話者が混在する場合は、発言単位で手作業ラベルを付す。Part ヘッダー・区切りは最後に除去する。
+チャンク（`## Part N`）ごとに 話者A/B と実名の対応を決め、対応表JSONを書いて一括置換する。Part ヘッダー・区切り線は置換と同時に除去される。
 
-```python
-import re
-PART_MAPPING = {
-    # 例: 1: {'話者A': '古賀部長〔◎〕', '話者B': '小西〔○〕'},
-}
-path = '<stem>_transcript.txt'
-content = open(path, encoding='utf-8').read()
-parts = re.split(r'(?=## Part \d+)', content)
-out = []
-for sec in parts:
-    m = re.match(r'## Part (\d+)', sec)
-    if m:
-        for spk, name in PART_MAPPING.get(int(m.group(1)), {}).items():
-            sec = sec.replace(f'{spk}:', f'{name}:')
-    out.append(sec)
-content = ''.join(out)
-content = re.sub(r'\n*---\n*', '\n', content)
-content = re.sub(r'\n*## Part \d+ — [^\n]+\n*', '\n', content)
-open(path, 'w', encoding='utf-8').write(content.strip() + '\n')
+```bash
+cat > mapping.json <<'JSON'
+{"1": {"話者A": "古賀部長〔◎〕", "話者B": "小西〔○〕"},
+ "2": {"話者A": "小西〔○〕",     "話者B": "金子〔△・AMED担当と推定〕"}}
+JSON
+python3 <このSKILL.mdのディレクトリ>/scripts/apply-speaker-mapping.py \
+    <stem>_transcript.txt --mapping mapping.json
 ```
+
+- Part 分割が無い（未分離＝全編が話者A）場合は、キー `"0"` の対応表が全体に適用される：`{"0": {"話者A": "古賀部長〔◎〕"}}`
+- 置換対象は行頭の `話者A:` 形式のみ。本文中で話者名に言及している箇所は書き換わらない。
+- `--dry-run` で結果を標準出力に出して確認できる。既定で `.bak` を残す（`--no-backup` で無効化）。
+- 未分離で1発言に複数話者が混在する場合は、この置換の後に発言単位で手作業ラベルを付す。
 
 確信が持てない箇所は記号 △／？ で明示し、必要なら `[要確認: 推定 ○○]` を残す。
 

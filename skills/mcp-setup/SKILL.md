@@ -39,44 +39,19 @@ node --version && npm --version && npx --version
 
 ### Google系サービスの場合
 
-対象例：Google Drive・Google Docs・Gmail など。
-OAuthクライアントIDとシークレットをGoogle Cloud Consoleで作成する。
-**これはブラウザ作業のため、ユーザーに以下の手順を丁寧に説明すること。**
+対象例：Google Drive・Google Docs・Gmail など。[Google Cloud Console](https://console.cloud.google.com/) で OAuth クライアントIDとシークレットを作成する。**すべてブラウザ作業なので、ユーザーに手順を説明して実行してもらう。**
 
-#### 2-1. Google Cloud Consoleにアクセス
-- URL: https://console.cloud.google.com/
-- Googleアカウントでログイン
+達成すべきことは5つ。
 
-#### 2-2. プロジェクトを作成
-1. 画面上部「プロジェクトを選択」→「新しいプロジェクト」
-2. プロジェクト名を入力（例: `claude-mcp`）して「作成」
-3. 作成したプロジェクトが選択されていることを確認
+1. プロジェクトを作成する（例: `claude-mcp`）
+2. 接続するサービスの API を有効化する（Drive → `Google Drive API`、Docs → `Google Docs API`、Gmail → `Gmail API`）
+3. OAuth 同意画面を設定する（User Type「外部」、アプリ名と連絡先メール）
+4. OAuth クライアントIDを作成する。種類は必ず **「デスクトップアプリ」**（ここを間違えると認証フローが通らない）
+5. JSON をダウンロードして分かりやすい場所に保存する
 
-#### 2-3. 使用するAPIを有効化
-1. 左メニュー「APIとサービス」→「ライブラリ」
-2. 接続するサービスのAPIを検索して有効化
-   - Google Drive → `Google Drive API`
-   - Google Docs → `Google Docs API`
-   - Gmail → `Gmail API`
+**画面ごとのクリック手順は `references/google-cloud-oauth-setup.md`。**画面名・遷移は Google が改定するため、逐語のラベルが一致しないときは目的に合う画面を実際の表示から探して読み替える。
 
-#### 2-4. OAuth同意画面の設定
-1. 左メニュー「APIとサービス」→「OAuth同意画面」
-2. User Type「外部」を選択して「作成」
-3. 以下を入力：
-   - アプリ名: `Claude MCP`（任意）
-   - ユーザーサポートメール: 自分のGmailアドレス
-   - デベロッパーの連絡先: 自分のGmailアドレス
-4. 「保存して次へ」を3回クリック→「ダッシュボードに戻る」
-
-#### 2-5. OAuthクライアントID作成
-1. 左メニュー「APIとサービス」→「認証情報」
-2. 「+ 認証情報を作成」→「OAuthクライアントID」
-3. アプリケーションの種類: **「デスクトップアプリ」**を選択
-4. 名前: `claude-mcp-client`（任意）
-5. 「作成」→「JSONをダウンロード」
-6. ダウンロードしたJSONファイルをデスクトップなどわかりやすい場所に保存
-
-完了したらユーザーに確認し、STEP 3へ。
+JSON のパスを確認できたら STEP 3 へ。
 
 ### Google以外のサービスの場合
 
