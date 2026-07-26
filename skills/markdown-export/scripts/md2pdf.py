@@ -35,6 +35,8 @@ Usage:
 import argparse
 import shutil
 import subprocess
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -45,6 +47,26 @@ CHROME_CANDIDATES = [
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+]
+
+# Windows: Program Files / ユーザーローカルの両方に入りうるため環境変数から組み立てる
+_WIN_ROOTS = [os.environ.get(v, "") for v in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+_WIN_RELPATHS = [
+    r"Google\Chrome\Application\chrome.exe",
+    r"Google\Chrome SxS\Application\chrome.exe",
+    r"Chromium\Application\chrome.exe",
+    r"Microsoft\Edge\Application\msedge.exe",
+    r"BraveSoftware\Brave-Browser\Application\brave.exe",
+]
+if sys.platform == "win32":
+    CHROME_CANDIDATES = [
+        str(Path(root) / rel) for root in _WIN_ROOTS if root for rel in _WIN_RELPATHS
+    ]
+
+# PATH 上のコマンド名（Linux や、上記以外の場所に入れた場合のフォールバック）
+CHROME_COMMANDS = [
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+    "chrome", "msedge", "brave",
 ]
 
 CSS_TEMPLATE = """<style>
@@ -87,6 +109,10 @@ def find_chrome() -> str:
     for c in CHROME_CANDIDATES:
         if Path(c).exists():
             return c
+    for cmd in CHROME_COMMANDS:
+        found = shutil.which(cmd)
+        if found:
+            return found
     print("ERROR: Google Chrome 等の Chromium 系ブラウザが見つかりません。", file=sys.stderr)
     sys.exit(1)
 

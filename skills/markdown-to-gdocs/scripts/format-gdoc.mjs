@@ -34,8 +34,10 @@ const PRESET = PRESETS[PRESET_NAME];
 if (!DOC_ID) { console.error('Usage: node format-gdoc.mjs <docId> [--inspect] [--account <name>] [--preset <name>]'); process.exit(1); }
 if (!PRESET) { console.error(`未知のpreset: ${PRESET_NAME}（利用可能: ${Object.keys(PRESETS).join(', ')}）`); process.exit(1); }
 
-const CREDS = `${process.env.HOME}/.config/gdrive-mcp/.gdrive-credentials-${ACCOUNT}-rw.json`;
-const OAUTH = `${process.env.HOME}/.config/gdrive-mcp/credentials.json`;
+// Windows では HOME が未設定のことが多いため USERPROFILE をフォールバックにする
+const HOME = process.env.HOME || process.env.USERPROFILE;
+const CREDS = `${HOME}/.config/gdrive-mcp/.gdrive-credentials-${ACCOUNT}-rw.json`;
+const OAUTH = `${HOME}/.config/gdrive-mcp/credentials.json`;
 const MARGIN_PT = PRESET.marginCm * CM_PER_PT;
 
 async function token() {

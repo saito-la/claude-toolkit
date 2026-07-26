@@ -28,8 +28,10 @@ if (!MARKDOWN_PATH || !FOLDER_ID) {
   process.exit(1);
 }
 
-const CREDS_OUT = `${process.env.HOME}/.config/gdrive-mcp/.gdrive-credentials-${ACCOUNT}-rw.json`;
-const OAUTH_PATH = `${process.env.HOME}/.config/gdrive-mcp/credentials.json`;
+// Windows では HOME が未設定のことが多いため USERPROFILE をフォールバックにする
+const HOME = process.env.HOME || process.env.USERPROFILE;
+const CREDS_OUT = `${HOME}/.config/gdrive-mcp/.gdrive-credentials-${ACCOUNT}-rw.json`;
+const OAUTH_PATH = `${HOME}/.config/gdrive-mcp/credentials.json`;
 
 const oauth = JSON.parse(readFileSync(OAUTH_PATH, 'utf8'));
 const clientId = oauth.installed.client_id;
@@ -79,7 +81,11 @@ async function getAccessToken() {
 
     console.log(`\n=== Google Drive 書き込み認証（account: ${ACCOUNT}） ===`);
     console.log('ブラウザが開きます。アップロードに使いたいGoogleアカウントでログインしてください。\n');
-    exec(`open "${authUrl}"`);
+    // ブラウザを開くコマンドはOSごとに異なる（mac: open / Windows: start / Linux: xdg-open）
+    const opener = process.platform === 'darwin' ? `open "${authUrl}"`
+      : process.platform === 'win32' ? `start "" "${authUrl}"`
+      : `xdg-open "${authUrl}"`;
+    exec(opener);
 
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, 'http://localhost:4567');
