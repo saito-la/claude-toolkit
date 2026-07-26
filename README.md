@@ -60,3 +60,4 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 |---|---|
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |
+| [rtk](tools/rtk/README.md) | bashコマンド出力を自動圧縮しトークン消費を削減するCLIプロキシ（本体は外部OSS、セットアップ手順のみ収録） |
