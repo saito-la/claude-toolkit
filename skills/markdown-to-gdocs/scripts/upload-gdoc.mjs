@@ -80,12 +80,16 @@ async function getAccessToken() {
       `&prompt=consent`;
 
     console.log(`\n=== Google Drive 書き込み認証（account: ${ACCOUNT}） ===`);
-    console.log('ブラウザが開きます。アップロードに使いたいGoogleアカウントでログインしてください。\n');
+    console.log('ブラウザが開きます。アップロードに使いたいGoogleアカウントでログインしてください。');
+    // 起動に失敗しても手で開けるよう、URL は必ず出す（Windows の start は未検証のため）
+    console.log(`開かないときはこのURLをブラウザに貼ってください:\n${authUrl}\n`);
     // ブラウザを開くコマンドはOSごとに異なる（mac: open / Windows: start / Linux: xdg-open）
     const opener = process.platform === 'darwin' ? `open "${authUrl}"`
       : process.platform === 'win32' ? `start "" "${authUrl}"`
       : `xdg-open "${authUrl}"`;
-    exec(opener);
+    exec(opener, (err) => {
+      if (err) console.error(`ブラウザの自動起動に失敗しました（${err.message}）。上のURLを手で開いてください。`);
+    });
 
     const server = createServer(async (req, res) => {
       const url = new URL(req.url, 'http://localhost:4567');
