@@ -1,6 +1,6 @@
 ---
 name: transcribe-meeting
-description: 会議・打ち合わせの録音ファイルから議事録を作りたいとき（「文字起こしして」「議事録にして」等）に使うスキル。話者名付きトランスクリプト・ケバ取り版・凝縮版の3ファイルを自動生成する。長尺音声は分割・品質検査・回復で取りこぼしを防ぎ、参考資料があれば発言者を確度付きで比定する。
+description: 会議・打ち合わせの録音ファイルから議事録を作りたいとき（「文字起こしして」「議事録にして」等）に使うスキル。話者名付きトランスクリプト・ケバ取り版・凝縮版の3ファイルを生成する。
 ---
 
 # 会議録音から議事録3点セット
@@ -42,7 +42,7 @@ description: 会議・打ち合わせの録音ファイルから議事録を作�
 
 ## Step 2: 文字起こし
 
-GEMINI_API_KEY が未設定なら「初回セットアップ」を先に案内する。PPT が渡された場合は先に PDF 変換（`libreoffice --headless --convert-to pdf --outdir /tmp/ <ppt>`）。
+GEMINI_API_KEY が未設定なら `references/setup.md` を案内する。PPT が渡された場合は先に PDF 変換（`libreoffice --headless --convert-to pdf --outdir /tmp/ <ppt>`）。
 
 **グロッサリ（文脈）ファイルを用意する**と固有名詞の誤認識を大幅に抑えられる。議事次第・出席者リスト・スライドから、主な発言者（実名・所属・役割）と専門用語の優先表記をテキストにまとめ、`--context` で渡す。例：`BRIDGE-X`（「ブリッジクロス」ではない）、`AND-E`（「アンディ」ではない）、`治験`（「知見」ではない）など、誤変換しやすい語を明記する。
 
@@ -54,11 +54,12 @@ python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py \
     --context <glossary.txt> --no-derive
 ```
 
-- **長尺（既定15分超）は自動で分割モードに直行**（チャンク10分）。短い音声は単一ファイルで試し、品質不良なら分割へ切替。
-- 各チャンクは **`check_quality`**（同一文字連続・**文/段落の反復ループ**・**尺に対する文字数不足＝途切れ**・短行過多）で検査し、失格なら **再試行 → モデル格上げ（flash→pro）→ 半分に再分割** で回復する。
-- 文字起こしモデルは既定 **`gemini-2.5-flash`**（高速・低コスト優先）。品質不良時は自動で `gemini-2.5-pro` に格上げして再試行する。精度優先で最初から pro を使いたい場合は `--model gemini-2.5-pro`。
+- **長尺は自動で分割モードに直行**。短い音声は単一ファイルで試し、品質不良なら分割へ切替。
+- 各チャンクは **`check_quality`**（同一文字連続・**文/段落の反復ループ**・**尺に対する文字数不足＝途切れ**・短行過多）で検査し、失格なら **再試行 → モデル格上げ（flash→pro）→ 半分に再分割** で回復する。精度優先で最初から pro を使うなら `--model` で指定する。
 - `--no-derive` を付け、**話者比定（Step 3）を済ませてから** verbatim/summary を生成する（Step 4）。
 - 各 Gemini 呼び出しのトークン消費は `<stem>_usage.json` に記録される。
+
+分割閾値・チャンク長・既定モデル名はスクリプト冒頭の定数が正本（`--help` に反映される）。**本ファイルに数値・モデル名を書かない**（二重管理で乖離する）。
 
 ## Step 3: 話者比定と確度付与
 
@@ -122,8 +123,6 @@ python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py \
 
 verbatim/summary は話者ラベルを継承する。**凝縮版（summary）だけは確度記号を簡略表記にする**：`〔◎〕`（確実）は付けない／`〔○〕`→`○`／`〔△〕`→`△`／`〔？〕`→`？`（transcript・verbatim は完全形 `〔◎〕〔○〕〔△〕〔？〕` を保持）。決定的に後処理され、summary 冒頭に凡例1行が付く。長尺は自動でブロック分割して処理（後処理でのループ・途切れを防止）。
 
-派生生成が済むと成果物を整理し、`<stem>_summary.md` だけを直下に残して他は `<stem>/` に一括する（`--no-organize` で無効化）。
-
 （Step 2 で `--no-derive` を付けなかった場合は文字起こし直後に自動生成されるが、その場合 Step 3 の比定後に本コマンドで再生成すること。）
 
 ## Step 5: 完了報告
@@ -136,28 +135,8 @@ open <stem>/<stem>_transcript.txt <stem>/<stem>_verbatim.txt <stem>_summary.md
 
 ## オプション
 
-| オプション | 用途 |
-|---|---|
-| `--context <file>` | 固有名詞・発言者候補を注入（誤認識抑制） |
-| `--no-derive` | 文字起こしのみ（比定後に `--derive-only` で派生生成）。整理はしない |
-| `--derive-only <transcript>` | 既存トランスクリプトから verbatim/summary だけ再生成（＋整理） |
-| `--no-organize` | 成果物を整理しない（summary.md 以外を `<stem>/` に移動しない） |
-| `--model <name>` | 文字起こしモデル指定（既定 `gemini-2.5-flash`。精度優先なら `gemini-2.5-pro`） |
-| `--rpd N` | 無料枠RPD目安の上書き（本日消費表示用。既定 flash=250） |
-| `--split` / `--chunk-minutes N` | 分割強制／チャンク長変更 |
+`python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py --help`。
 
-## 初回セットアップ
+## セットアップ
 
-依存パッケージ：
-
-```bash
-pip3 install google-genai
-```
-
-Gemini APIキーの取得と設定：
-
-1. [Google AI Studio](https://aistudio.google.com/apikey) で「Create API key」
-2. キー（`AIza...`）を環境変数に設定：`export GEMINI_API_KEY="..."`（`~/.zshrc` 等に追記して永続化）
-3. または `~/.config/claude-toolkit/gemini-api-key` にキーだけを書いたファイルを置く（環境変数未設定時のフォールバック）
-
-音声分割には `ffmpeg`／`ffprobe` が必要（`brew install ffmpeg`）。GUI選択モード（`--gui`）を使う場合は `tkinter` が必要。
+`GEMINI_API_KEY` 未設定・`ffmpeg` 不在などで動かないときは `references/setup.md`。

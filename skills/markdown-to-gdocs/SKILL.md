@@ -23,15 +23,9 @@ node <このSKILL.mdのディレクトリ>/scripts/format-gdoc.mjs <docID> --acc
 - 内容を変えたら 1→3 を再実行して新Docを作る（旧Docは Drive API でゴミ箱へ）。
 - `--preset` は `format-gdoc.mjs` 冒頭の `PRESETS` オブジェクトで定義。既定は `formal-ja`（余白1.5cm・全文メイリオ・行間0.85・タイトル中央/サブタイトル右詰め）。用途別プリセットを増やす場合はここに追記する。
 
-## 初回セットアップ
+## セットアップ
 
-自分のGoogle Cloudプロジェクトが必要：
-
-1. Google Cloud Console で新規プロジェクトを作成し、OAuth同意画面・OAuthクライアント（デスクトップアプリ）を設定。
-2. Google Drive API・Google Docs API を有効化。
-3. ダウンロードしたクライアントJSONを `~/.config/gdrive-mcp/credentials.json` に配置。
-4. `upload-gdoc.mjs` を初回実行するとブラウザが開くので、使いたいGoogleアカウントでログイン→「未確認アプリ」は「詳細」→「移動」→許可。認証情報は `~/.config/gdrive-mcp/.gdrive-credentials-<account>-rw.json` に保存される。
-5. 本番公開済みOAuthに昇格しておくと以後は自動更新で再認証不要になる（任意）。
+自分の Google Cloud プロジェクトと OAuth クライアントが必要。未認証・トークン切れで失敗するときは `references/setup.md`。
 
 ## 設計上の要点・ハマりどころ
 
