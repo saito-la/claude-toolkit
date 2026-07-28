@@ -13,6 +13,8 @@ description: 会議・打ち合わせの録音ファイルから議事録を作�
 | `<stem>_verbatim.txt` | ケバ取り版（フィラー除去・全内容保持） |
 | `<stem>_summary.md` | 凝縮版（重複排除・小見出し付き段落再構成） |
 
+`<stem>` は既定で音声ファイル名（拡張子除く）。ただし `Untitled` / `New Recording` / `IMG_1234` / `録音` 等、録音機器・OSの既定名（中身を表さない名前）の場合は、summary 生成時に内容から自動でタイトル・kebab-caseスラッグを生成し、3ファイル一式をそのスラッグにリネームする（音声ファイル名が既に内容を表している場合はリネームしない）。
+
 **成果物の整理（既定）**：派生生成まで済むと、`<stem>_summary.md` だけを直下に残し、音声・チャンク・中間txt（transcript/verbatim）・`<stem>_usage.json` を `<stem>/` サブフォルダに一括する（md 以外は素材フォルダにまとめる運用）。`--no-organize` で無効化。`--no-derive`（文字起こしのみ）では summary が無いため整理せず transcript を直下に残す（話者比定の作業用）。
 
 **このSKILL.mdが置かれているディレクトリを基準に、`scripts/audio-transcribe.py` を実行すること。**

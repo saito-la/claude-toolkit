@@ -596,8 +596,43 @@ def _summary_marker_style(text: str) -> str:
     return text
 
 
-SUMMARY_LEGEND = ("> 話者比定の確度：無印＝確実／○＝推定（高）／△＝推定（低）／？＝不明。"
-                  "自動文字起こしからの校正物であり確定議事録ではない。\n\n")
+GENERIC_STEM_RE = re.compile(
+    r"^(untitled|new[ _-]?recording(\s*\d+)?|recording(\s*\d+)?|rec\d*|"
+    r"voice[ _-]?memo(s)?(\s*\d+)?|img[ _-]?\d+|vid[ _-]?\d+|audio[ _-]?\d+|\d+|"
+    r"録音(\s*\d+)?|無題)$",
+    re.IGNORECASE,
+)
+
+
+def looks_generic(stem: str) -> bool:
+    """録音機器・OSの既定ファイル名（Untitled、New Recording 等）かどうかを判定する。"""
+    return bool(GENERIC_STEM_RE.match(stem.strip()))
+
+
+TITLE_PROMPT = """以下は会議の凝縮要約です。この内容を表すタイトルを2行で出力してください（他は一切出力しない）。
+
+1行目: 日本語タイトル（15字以内、体言止め、括弧・記号・「」なし）
+2行目: 同じ内容を表す英語 kebab-case のスラッグ（2〜5語、ハイフン区切り、すべて小文字、日付や拡張子は付けない）
+
+---
+{text}"""
+
+
+def derive_title(client, summary_text: str):
+    """要約から (日本語タイトル, kebab-case スラッグ) を生成する。失敗時は (None, None)。"""
+    try:
+        resp = generate_with_retry(client, "title", model=POST_MODEL,
+                                   contents=TITLE_PROMPT.format(text=summary_text[:6000])).text or ""
+    except Exception:
+        return None, None
+    lines = [l.strip(" 　#*「」") for l in resp.strip().splitlines() if l.strip()]
+    if not lines:
+        return None, None
+    if len(lines) < 2:
+        return lines[0], None
+    title, raw_slug = lines[0], lines[1]
+    slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", raw_slug.lower())).strip("-")
+    return title, (slug or None)
 
 
 def organize_outputs(out_dir: Path, stem: str, audio: Path = None) -> Path:
@@ -643,7 +678,10 @@ def organize_outputs(out_dir: Path, stem: str, audio: Path = None) -> Path:
 
 
 def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
-    """トランスクリプトから verbatim（ケバ取り）と summary（凝縮）を生成する。"""
+    """トランスクリプトから verbatim（ケバ取り）と summary（凝縮）を生成する。
+    stem が録音機器の既定名（Untitled 等）の場合、内容から生成したタイトルでファイル一式をリネームする。
+    戻り値は (verbatim_out, summary_out, 最終的な stem)。"""
+    transcript_path = out_dir / f"{stem}_transcript.txt"
     verbatim_out = out_dir / f"{stem}_verbatim.txt"
     summary_out = out_dir / f"{stem}_summary.md"
     blocks = _split_for_post(transcript)
@@ -669,9 +707,28 @@ def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
         summary = generate_with_retry(client, "summary-merge", model=POST_MODEL,
                                       contents=MERGE_PROMPT.format(text="\n\n".join(sparts))).text or ""
     summary = _summary_marker_style(collapse_loops(summary).strip())
-    summary_out.write_text(SUMMARY_LEGEND + summary + "\n", encoding="utf-8")
+
+    title, slug = derive_title(client, summary)
+    body = f"# {title}\n\n{summary}\n" if title else summary + "\n"
+
+    new_stem = stem
+    if slug and looks_generic(stem):
+        new_stem = slug
+        for src, dst in (
+            (transcript_path, out_dir / f"{new_stem}_transcript.txt"),
+            (verbatim_out, out_dir / f"{new_stem}_verbatim.txt"),
+        ):
+            if src.exists():
+                if dst.exists():
+                    dst.unlink()
+                src.rename(dst)
+        verbatim_out = out_dir / f"{new_stem}_verbatim.txt"
+        summary_out = out_dir / f"{new_stem}_summary.md"
+        print(f"\nタイトルを内容から生成: {stem} → {new_stem}")
+
+    summary_out.write_text(body, encoding="utf-8")
     print(f" 完了: {summary_out.name}")
-    return verbatim_out, summary_out
+    return verbatim_out, summary_out, new_stem
 
 
 # ── API キー・GUI ───────────────────────────────────────────────
@@ -750,7 +807,10 @@ def main():
                 QUALITY_LOG[:0] = data.get("quality_detail", [])
             except (ValueError, OSError):
                 pass
-        v, s = derive_files(client, transcript, tpath.parent, stem)
+        old_stem = stem
+        v, s, stem = derive_files(client, transcript, tpath.parent, stem)
+        if stem != old_stem and prev.exists():
+            prev.unlink()                    # 旧stemのusage.jsonは新stem側に統合されるため削除
         write_usage_report(tpath.parent, stem)
         if not a.no_organize:
             organize_outputs(tpath.parent, stem)
@@ -814,7 +874,7 @@ def main():
     print(f"\n文字起こし完了: {out}")
 
     if not a.no_derive:
-        derive_files(client, result, out.parent, stem)
+        _, _, stem = derive_files(client, result, out.parent, stem)
 
     write_usage_report(out.parent, stem)
     # 整理（既定）：summary.md 以外（音声・チャンク・transcript/verbatim・usage）を <stem>/ に一括。
@@ -827,7 +887,7 @@ def main():
         print(f"  {out.parent / (stem + '_summary.md')}")
         print(f"  （他は {out.parent / stem}/ に格納）")
     else:
-        print(f"  {out}")
+        print(f"  {out.parent / (stem + '_transcript.txt')}")
         if not a.no_derive:
             print(f"  {out.parent / (stem + '_verbatim.txt')}")
             print(f"  {out.parent / (stem + '_summary.md')}")
