@@ -24,14 +24,15 @@ from google.genai import errors, types
 
 
 # ── モデル・閾値 ────────────────────────────────────────────────
-TRANSCRIBE_MODEL = "gemini-3.5-flash"   # 文字起こし既定（高速・低コスト優先）
-PRO_MODEL        = "gemini-pro-latest"  # 品質不良時の自動格上げ先
-FAST_MODEL       = "gemini-3.5-flash"   # 課金枠制限時のフォールバック先
-POST_MODEL       = "gemini-3.5-flash"   # verbatim / summary 生成（後処理）
+PRO_MODEL        = "gemini-pro-latest"  # 精度優先モデル
+FAST_MODEL       = "gemini-3.5-flash"   # 課金枠制限時のフォールバック先（ProがこのAPIキーの枠で使えない場合に自動格下げ）
+TRANSCRIBE_MODEL = PRO_MODEL            # 文字起こし既定。Proが使えれば常にProで実施する（精度優先。齋藤指示 2026-07-30）
+POST_MODEL       = "gemini-3.5-flash"   # verbatim / summary 生成（後処理。文字起こし後の整形のみのため高速モデルで足りる）
 # 注: gemini-2.5-* は新規プロジェクト（新規ユーザー）では generateContent 不可（404）。現行世代を既定にする。
 LONG_AUDIO_THRESHOLD_SEC = 15 * 60      # これを超える音声は分割モードへ直行
 DEFAULT_CHUNK_MIN = 15                  # 分割時のチャンク長（分）。大きいほど総リクエスト数が減る
 MIN_CHARS_PER_SEC = 1.5                 # チャンク文字数の下限目安（下回れば途切れの疑い）
+MAX_CHARS_PER_SEC = 20                  # チャンク文字数の上限目安（上回れば尺に対して過大＝内容捏造の疑い。日本語の早口でも実測7-8字/秒程度）
 POST_BLOCK_CHARS = 24000                # verbatim/summary を分割処理する塊サイズ
 
 # 概算単価（USD / 100 万トークン）。正確な請求額ではない。必要に応じ更新。
@@ -53,6 +54,9 @@ FREE_TIER_RPD = {
 }
 # 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）
 DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.json"
+
+# 使用APIキーの種別（無料枠 / 課金）。main() で判定して表示用に保持する
+_API_KEY_KIND = "不明"
 
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
@@ -300,6 +304,8 @@ def write_usage_report(out_dir: Path, stem: str):
               "quality_detail": QUALITY_LOG, "calls": USAGE_LOG}
     path = out_dir / f"{stem}_usage.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    models_used = sorted({r["model"] for r in rows})
+    print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー種別: {_API_KEY_KIND}")
     print("\n── トークン消費（Gemini API） ──")
     for r in rows:
         print(f"  {r['stage']:<14}{r['model']:<20}calls={r['calls']:>2}  "
@@ -329,19 +335,49 @@ def _detect_loop(text: str) -> str:
     return ""
 
 
-def check_quality(text: str, min_chars: int = None) -> tuple:
-    """文字化け・ループ・途切れを検出。(ok, reason) を返す。"""
+def _detect_short_cycle_loop(text: str) -> str:
+    """短い発言の往復（ピンポン型）反復ループを検出する。
+    「話者A: X／話者B: Y」のような1〜3行の周期が5回以上連続すると失格にする。
+    _detect_loop は20字未満の短い発言を対象外にするため、この種の破綻（例：
+    「鈴木先生。」/「鈴木先生も、そう。」の連続）を単独では検知できない。"""
+    lines = [re.sub(r'^\[?\d{1,2}:\d{2}\]?\s*', '', l).strip()
+             for l in text.splitlines() if l.strip()]
+    n = len(lines)
+    i = 0
+    while i < n:
+        for period in (1, 2, 3):
+            if i + period * 5 > n:
+                continue
+            cycle = lines[i:i + period]
+            reps = 1
+            j = i + period
+            while j + period <= n and lines[j:j + period] == cycle:
+                reps += 1
+                j += period
+            if reps >= 5:
+                return f"短周期の反復ループを検出（{period}行周期×{reps}回）: {cycle}"
+        i += 1
+    return ""
+
+
+def check_quality(text: str, min_chars: int = None, max_chars: int = None) -> tuple:
+    """文字化け・ループ・途切れ・捏造を検出。(ok, reason) を返す。"""
     t = (text or "").strip()
     if not t:
         return False, "空の出力"
     m = re.search(r'(.)\1{9,}', t)                       # 同一文字の連続
     if m:
         return False, f"同一文字の連続を検出: {m.group(0)[:20]!r}"
-    reason = _detect_loop(t)                             # 反復ループ
+    reason = _detect_loop(t)                             # 長い文/段落の反復ループ
+    if reason:
+        return False, reason
+    reason = _detect_short_cycle_loop(t)                 # 短い発言の反復ループ（ピンポン型）
     if reason:
         return False, reason
     if min_chars and len(re.sub(r'\s', '', t)) < min_chars:   # 尺に対して短すぎ＝途切れ
         return False, f"文字数が想定を大きく下回る（{len(t)}字 / 目安{min_chars}字）＝途切れの疑い"
+    if max_chars and len(re.sub(r'\s', '', t)) > max_chars:   # 尺に対して多すぎ＝内容捏造の疑い
+        return False, f"文字数が尺に対して過大（{len(t)}字 / 上限目安{max_chars}字）＝無音・短尺区間からの内容捏造（ハルシネーション）の疑い"
     lines = [l.strip() for l in t.splitlines() if l.strip()]  # 短行が過半（既存）
     if len(lines) > 20:
         short = sum(1 for l in lines if len(l) <= 3)
@@ -506,11 +542,12 @@ def transcribe_with_recovery(client, path: Path, prompt: str, model: str,
                              depth: int = 0) -> str:
     """1チャンクを文字起こしし、品質不良なら再試行→格上げ→再分割で回復する。"""
     min_chars = int(duration_sec * MIN_CHARS_PER_SEC) if duration_sec else None
+    max_chars = int(duration_sec * MAX_CHARS_PER_SEC) if duration_sec else None
     attempts = []
     for attempt in range(2):                       # 初回＋再試行1
         m = model if attempt == 0 else escalate(model)
         text = collapse_loops(transcribe_file(client, path, prompt, m, stage))
-        ok, reason = check_quality(text, min_chars=min_chars)
+        ok, reason = check_quality(text, min_chars=min_chars, max_chars=max_chars)
         if ok:
             _record_quality(path.name, duration_sec, text, True, "",
                             attempt + 1, escalated=(m != model))
@@ -554,10 +591,11 @@ def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
         d = probe_duration(chunk)
         covered += d or 0
         min_chars = int(d * MIN_CHARS_PER_SEC) if d else None
+        max_chars = int(d * MAX_CHARS_PER_SEC) if d else None
         cache = _chunk_cache_path(chunk)
         if cache.exists() and cache.stat().st_size > 0:
             cached = cache.read_text(encoding="utf-8")
-            ok, _ = check_quality(cached, min_chars=min_chars)
+            ok, _ = check_quality(cached, min_chars=min_chars, max_chars=max_chars)
             if ok:                                    # 品質を満たす済チャンクのみ再利用
                 print(f"[{i + 1}/{n}] キャッシュ再利用: {cache.name}")
                 parts.append(f"## Part {i + 1} — {chunk.name}\n\n{cached}")
@@ -789,6 +827,9 @@ def main():
         sys.exit("エラー: Gemini API キーが未設定。環境変数 GEMINI_API_KEY を設定するか、"
                  "~/.config/claude-toolkit/gemini-api-key にキーを保存してください。"
                  "（取得: https://aistudio.google.com/apikey）")
+    global _API_KEY_KIND
+    _API_KEY_KIND = ("無料枠（AQ.形式トークン）" if a.api_key.startswith("AQ.")
+                     else "課金キーの可能性あり（AIza…等。実際の課金状態は要Google AI Studio確認）")
     client = genai.Client(api_key=a.api_key)
 
     # ── derive-only モード ──────────────────────────────────
