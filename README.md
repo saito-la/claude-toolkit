@@ -40,7 +40,7 @@ ln -sf ~/claude-toolkit/tools/statusline/statusline.py ~/.claude/statusline.py
 chmod +x ~/.claude/statusline.py
 ```
 
-配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。明示的にコマンドを打つ場合は各SKILL.mdの使い方を参照。statuslineの表示には `~/.claude/settings.json` への `statusLine` キー追加が別途必要（[tools/statusline/README.md](tools/statusline/README.md)参照）。トークン削減が必要なら [rtk](tools/rtk/README.md) も導入する。
+配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。明示的にコマンドを打つ場合は各SKILL.mdの使い方を参照。statuslineの表示には `~/.claude/settings.json` への `statusLine` キー追加が別途必要（[tools/statusline/README.md](tools/statusline/README.md)参照）。
 
 **個別プロジェクト配置**は上記グローバル標準に含めない。該当プロジェクトの `.claude/skills/<name>/` へ個別にsymlinkする。
 
@@ -65,4 +65,4 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 |---|---|
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |
-| [rtk](tools/rtk/README.md) | bashコマンド出力を自動圧縮しトークン消費を削減するCLIプロキシ（本体は外部OSS、セットアップ手順のみ収録） |
+| [rtk](tools/rtk/README.md) | 2026-08-01に廃止。bash出力が静かに別内容へ置き換わり誤った集計を生む障害のため。2026-07-27〜08-01に導入した人は削除手順を参照 |

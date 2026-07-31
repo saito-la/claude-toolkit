@@ -1,46 +1,53 @@
 # rtk
 
-正式名称 RTK（Rust Token Killer）。Claude Codeのbashコマンド出力をフックで自動的に圧縮し、トークン消費を60〜90%削減するCLIプロキシ。本体は外部OSS（[rtk-ai/rtk](https://github.com/rtk-ai/rtk)、Apache-2.0、Rust製）で、このリポジトリにはセットアップ手順のみを置く。
+**この収録は 2026-08-01 に廃止した。導入している場合は下記の手順で削除すること。**
 
-`git status` → `rtk git status` のようにコマンドが透過的に書き換えられ、通常の呼び出し方は変わらない。
+正式名称 RTK（Rust Token Killer）。Claude Code の bash コマンド出力をフックで自動的に圧縮し、トークン消費を削減する CLI プロキシ。本体は外部 OSS（[rtk-ai/rtk](https://github.com/rtk-ai/rtk)、Apache-2.0、Rust製）で、このリポジトリにはセットアップ手順のみを置いていた。
 
-## セットアップ
+セットアップ手順の収録期間は 2026-07-27 から 2026-08-01 まで。この間にこのリポジトリまたは `crpc-tools` の手順で導入した場合が対象。
 
-**macOS（Homebrew、推奨）：**
+## 廃止の理由
+
+出力が減るのではなく、**出力が別の内容に静かに置き換わる**障害が確認された。
+
+`grep '^path = ' <file>` の結果が `61 matches in 1 files:` という要約文に置換され、それをパイプで受けた集計が「対象ファイル 0 件」という誤った答えを返した。フックは全 bash 呼び出しに無条件で掛かるため、件数・パス一覧・存在確認といった**プログラムが消費する出力**が壊れ、しかも失敗が沈黙する。同じ調査では `cat -A` が本来の cat と非互換で失敗し、rtk 自身が `Broken pipe` で panic する事象も出た。
+
+トークン節約の失敗は回復できるが、誤った数値を返す層は bash 由来のあらゆる集計の信頼性を損なう。ファイル内容の圧縮（平均約3割の省略）も、名簿や一次データを逐字で読む用途と両立しない。
+
+条件を付けて一部だけ自動適用する案も検討したが、省略が有害かどうかは「そのとき何を探しているか」で決まり、フックの入力（コマンド文字列）には含まれないため判定できない。削減率が最大だったのは staged diff の 98.8% で、これは全文を読むべき対象であり、高い削減率はそのまま「隠された量」を意味していた。
+
+出力が大きいときは、要約ではなく問いを狭める（`git diff --stat`、`git log --oneline`、`grep -c`、`ps -p <PID>` 等）。
+
+## 削除手順
+
+`rtk init -g --uninstall` だけでは残留することがある。`rtk init -g --auto-patch` はフックを重複登録する場合があり（旧版のこの README でも注意していた）、rtk 自身の設置検出も当てにならない（フックが実在するのに `No hook installed` と報告した実例がある）。そのため、設定ファイルを直接検査するスクリプトを用意した。
+
+`settings.json` を手で編集する必要はない。JSON を壊すと Claude Code が起動しなくなるため、スクリプトを使うこと。
+
+1. 何が残っているかを確認する。何も書き換えない。
 
 ```bash
-brew install rtk
-rtk init -g --auto-patch
+python3 ~/claude-toolkit/tools/rtk/remove-rtk.py
 ```
 
-**その他（curlスクリプト、`~/.local/bin`に配置）：**
+2. 「対応は不要」と出れば導入していない。ここで終わり。残っていれば削除を実行する。バックアップを作ってから書き換える。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
-rtk init -g --auto-patch
+python3 ~/claude-toolkit/tools/rtk/remove-rtk.py --apply
 ```
 
-`rtk init -g` が `~/.claude/RTK.md` の生成、`~/.claude/settings.json` へのPreToolUse(Bash)フック追加、`~/.claude/CLAUDE.md` への `@RTK.md` 参照追加を行う。設定後はClaude Codeを再起動する。
-
-## 動作確認
+3. rtk 本体を削除する。
 
 ```bash
-rtk --version   # rtk X.Y.Z が出ること
-rtk gain        # ダッシュボードが表示されること（command not found にならない）
-which rtk       # 正しいバイナリを指しているか確認
-```
-
-Claude Code内で `git status` 等を実行させ、`rtk gain` の使用履歴に記録されれば正常動作。
-
-## 落とし穴
-
-- **名前衝突**：`brew search rtk` は `reachingforthejack/rtk`（Rust Type Kit・別物）とは異なる。`brew info rtk` の説明文が「CLI proxy to minimize LLM token consumption」であることを確認してからインストールする。
-- **既存のガード付きhookがある環境で `rtk init -g --auto-patch` を実行すると、`PreToolUse.Bash` にフックが重複登録されることがある**（`command -v rtk >/dev/null 2>&1 && rtk hook claude || exit 0` という既存の無害化ガード付きエントリに加え、`rtk hook claude` 単体のエントリが追記される）。`~/.claude/settings.json` の `hooks.PreToolUse` を確認し、重複していれば片方を削除する。
-- `~/.claude/settings.json`・`~/.claude/CLAUDE.md` をdotfilesでcopy運用している場合、`rtk init -g` の変更はローカル実体にのみ反映される。他マシンへ伝播させるには、通常のdotfiles同期フロー（上り→リポジトリ反映）を通す。
-
-## アンインストール
-
-```bash
-rtk init -g --uninstall
 brew uninstall rtk
 ```
+
+curl スクリプトで導入した場合は `~/.local/bin/rtk` を削除する。
+
+4. Claude Code を再起動する。
+
+5. 手順1を再実行し、「対応は不要」と出ることを確認する。
+
+スクリプトが触るのは `~/.claude/` の `settings.json`・`settings.local.json`・`CLAUDE.md`・`RTK.md` のみで、rtk に言及するフック・許可設定と `@RTK.md` のインポート行だけを取り除く。他のフック・`model`・`statusLine`・その他の許可設定は保持する。書き換えたファイルは同じディレクトリに `.bak-<日時>` として退避する。何度実行しても同じ結果になる。
+
+`settings.json` を dotfiles でコピー運用している場合は、削除後にリポジトリ側へ反映する（ローカル実体のみが変わるため）。
