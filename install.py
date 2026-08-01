@@ -298,15 +298,51 @@ def remove_orphans(plan: Plan, prev: dict, root: Path, dry: bool, quiet: bool):
 
 # --- settings.json --------------------------------------------------------
 
+def _windows_short_path(path: str) -> str:
+    """空白を含まない 8.3 短縮パスへ変換する。取れなければ元のパスを返す。
+
+    ボリュームによっては 8.3 名の生成が無効化されており、その場合は長いパスが
+    そのまま返る。呼び出し側で空白が残っていないか確認すること。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        fn = ctypes.windll.kernel32.GetShortPathNameW
+        fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        fn.restype = wintypes.DWORD
+        need = fn(path, None, 0)
+        if not need:
+            return path
+        buf = ctypes.create_unicode_buffer(need)
+        if not fn(path, buf, need):
+            return path
+        return buf.value or path
+    except (ImportError, AttributeError, OSError):
+        return path
+
+
+def _windows_statusline_exe() -> str:
+    return _windows_short_path(sys.executable).replace("\\", "/")
+
+
 def _statusline_command() -> str:
     if platform.system() == "Windows":
-        # cmd 経由では POSIX の存在ガードが書けないため、絶対パスで直接指す。
-        # Claude Code は Windows でも Git Bash 等の POSIX シェル経由で statusLine
-        # コマンドを実行することがあり、その場合バックスラッシュはエスケープとして
-        # 解釈され消えて command not found になる（2026-08-01、311C4W991で実機確認）。
-        # フォワードスラッシュなら python.exe 側も bash 側も問題なく解釈できるため、
-        # どちらのシェル経由でも壊れないようこちらへ統一する。
-        py = sys.executable.replace("\\", "/")
+        # POSIX の存在ガードが書けないため、絶対パスで直接指す。
+        #
+        # Claude Code は Windows の statusLine を Git Bash（あれば）か、無ければ
+        # PowerShell（-NoProfile -NonInteractive -Command）で実行する。cmd は経由
+        # しない（2026-08-01、CLI 2.1.87 の実装で確認）。この2つはクォートの要求が
+        # 正反対で、両方で動く形は「実行ファイルは裸・引数はクォート」しかない。
+        #   bash       : バックスラッシュはエスケープとして食われて消え
+        #                command not found になる（311C4W991 で実機確認）ため / に
+        #                統一する。空白入りパスにはクォートが要る。
+        #   PowerShell : `"...exe" "..."` は式として解釈され Unexpected token で
+        #                落ちる。実行ファイルをクォートするなら `&` の前置が要るが、
+        #                それは bash 側で構文エラーになる。
+        # そこで実行ファイルは 8.3 短縮パスにして空白そのものを消し、裸で置く。
+        # 引数側のクォートはどちらのシェルでも素通しなので、こちらは残す。
+        py = _windows_statusline_exe()
         script = str(CLAUDE / "statusline.py").replace("\\", "/")
         return f'{py} "{script}"'
     # statusline.py が無い／リンクが切れていてもエラーにしない。
@@ -328,6 +364,12 @@ def ensure_statusline_setting(dry: bool, quiet: bool):
         settings = {}
 
     want = _statusline_command()
+    if platform.system() == "Windows" and " " in _windows_statusline_exe():
+        log(
+            "⚠️  Python の実行ファイルパスに空白があり、8.3 短縮名も取得できませんでした。"
+            "statusLine が表示されない場合は空白を含まない場所へ Python を入れ直してください",
+            quiet,
+        )
     cur = settings.get("statusLine")
     if isinstance(cur, dict):
         cur_cmd = str(cur.get("command", ""))
