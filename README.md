@@ -16,14 +16,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [copy-paste-output-format](conventions/copy-paste-output-format.md) | コピペ前提テキストの出力作法（URL単独行・`.txt`/`pbcopy`） |
 | [session-end-auto-file-move](conventions/session-end-auto-file-move.md) | セッション終了時のテンポラリファイル自動移動ポリシー |
 
-配置（インストーラが行う。手動で行う場合）：
-
-```bash
-mkdir -p ~/.claude/conventions
-for f in ~/claude-toolkit/conventions/*.md; do ln -sf "$f" ~/.claude/conventions/; done
-```
-
-グローバル `~/.claude/CLAUDE.md` に「作業種別ごとの規約は `~/.claude/conventions/` が正本。着手前に該当ファイルを読む」の1行を置くと、Claude が作業種別に応じて読みに行く。取り込みは任意。
+配置は `install.py` が行う（下記「インストール」）。グローバル `~/.claude/CLAUDE.md` に「作業種別ごとの規約は `~/.claude/conventions/` が正本。着手前に該当ファイルを読む」の1行を置くと、Claude が作業種別に応じて読みに行く。取り込みは任意。
 
 ## 収録スキル
 
@@ -49,21 +42,37 @@ for f in ~/claude-toolkit/conventions/*.md; do ln -sf "$f" ~/.claude/conventions
 
 ## インストール
 
-**グローバル標準セットアップ**（新Mac・新環境で最初に行う導入。以後は「claude-toolkitを導入して」で再現できる）：
-
 ```bash
 git clone <このリポジトリ> ~/claude-toolkit
-mkdir -p ~/.claude/skills
-ln -sf ~/claude-toolkit/skills/markdown-export     ~/.claude/skills/markdown-export
-ln -sf ~/claude-toolkit/skills/markdown-to-gdocs   ~/.claude/skills/markdown-to-gdocs
-ln -sf ~/claude-toolkit/skills/transcribe-meeting  ~/.claude/skills/transcribe-meeting
-ln -sf ~/claude-toolkit/skills/mcp-setup           ~/.claude/skills/mcp-setup
-ln -sf ~/claude-toolkit/skills/format-prompt       ~/.claude/skills/format-prompt
-ln -sf ~/claude-toolkit/tools/statusline/statusline.py ~/.claude/statusline.py
-chmod +x ~/.claude/statusline.py
+python3 ~/claude-toolkit/install.py
 ```
 
-配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。明示的にコマンドを打つ場合は各SKILL.mdの使い方を参照。statuslineの表示には `~/.claude/settings.json` への `statusLine` キー追加が別途必要（[tools/statusline/README.md](tools/statusline/README.md)参照）。
+`install.py` が `skills/`・`conventions/`・`guides/`・`instructions/`・`tools/statusline/statusline.py` を `~/.claude/` へ配置し、`settings.json` に `statusLine` を追記する（既に設定済みなら壊さない）。POSIX では symlink、Windows では権限の都合でコピーになる。
+
+配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。`instructions/` だけは置くだけでは読まれず、`~/.claude/CLAUDE.md` に `@instructions/<名前>` を足して初めて効く（必要な行はインストーラが最後に表示する）。
+
+### 更新
+
+```bash
+git -C ~/claude-toolkit pull
+python3 ~/claude-toolkit/install.py
+```
+
+**冪等で、消えたものが消える。** 何を配置したかを `~/.claude/.wired-by` に記録しておき、次回そこに無いものを撤去する。上流で廃止したスキル・規約が端末に残り続けることがない。ユーザーが自分の実体に差し替えたファイルは撤去せず残す。何が起きるかだけ見たいときは `--dry-run`。
+
+symlink 配置なら中身の更新は `git pull` だけで反映される（再実行が要るのは、スキルの増減があったときと、コピー配置の Windows）。
+
+### 配布リポジトリから呼ぶ場合
+
+**配置ロジックはこのリポジトリの `install.py` が唯一の実装。** 配布側は置き方を書き直さず、submodule として抱えた本スクリプトを呼ぶ。
+
+```bash
+python3 vendor/claude-toolkit/install.py --label "<配布元の名前>"
+```
+
+主なオプションは `--root`（配布元。既定は本スクリプトの位置）・`--mode symlink|copy`・`--no-settings`（呼び出し側が `settings.json` を管理する場合）・`--force`・`--dry-run`。
+
+1台のマシンに配布元が複数ある場合（正本 clone と、配布リポジトリの submodule が同居する場合）、**後から走った別の配布元による上書きは中止される。** 参照先が配布用スナップショットへ倒れると、正本を編集しても submodule を bump するまで反映されなくなるため。意図した切り替えなら `--force`、動作確認なら `HOME=$(mktemp -d) python3 install.py` でホームを分ける。
 
 **個別プロジェクト配置**は上記グローバル標準に含めない。該当プロジェクトの `.claude/skills/<name>/` へ個別にsymlinkする。
 
