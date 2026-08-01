@@ -1,6 +1,29 @@
 # claude-toolkit
 
-Claude Code用の汎用Skill集。プロジェクト非依存のツール群。
+Claude Code用の汎用Skill・規約集。プロジェクト非依存のツール群。
+
+## 収録規約
+
+`conventions/` は「どの組織・どの案件でも通用する作業規約」を置く。Claude Code から `~/.claude/conventions/<name>.md` として参照される前提で書き、個人・組織固有の絶対パス・実名・内部文書の節番号は含めない。
+
+| 規約 | 内容 |
+|---|---|
+| [living-doc-structure](conventions/living-doc-structure.md) | 生きた文書（`overview.md` 等）の構成。見出しは名詞句のみ・連番は1始まり・履歴を本文に溜めない |
+| [action-items-convention](conventions/action-items-convention.md) | `action-items.md` の運用と完了項目のアーカイブ |
+| [sop-manual-authoring](conventions/sop-manual-authoring.md) | SOP・手順書・業務マニュアルの標準構成と記述作法 |
+| [spreadsheet-structure](conventions/spreadsheet-structure.md) | スプレッドシート設計（入力層／表示層の分離・tidy table・権限境界でファイル分割） |
+| [file-naming-and-folder-hygiene](conventions/file-naming-and-folder-hygiene.md) | 共有ファイル・フォルダの命名と配置 |
+| [copy-paste-output-format](conventions/copy-paste-output-format.md) | コピペ前提テキストの出力作法（URL単独行・`.txt`/`pbcopy`） |
+| [session-end-auto-file-move](conventions/session-end-auto-file-move.md) | セッション終了時のテンポラリファイル自動移動ポリシー |
+
+配置（インストーラが行う。手動で行う場合）：
+
+```bash
+mkdir -p ~/.claude/conventions
+for f in ~/claude-toolkit/conventions/*.md; do ln -sf "$f" ~/.claude/conventions/; done
+```
+
+グローバル `~/.claude/CLAUDE.md` に「作業種別ごとの規約は `~/.claude/conventions/` が正本。着手前に該当ファイルを読む」の1行を置くと、Claude が作業種別に応じて読みに行く。取り込みは任意。
 
 ## 収録スキル
 
