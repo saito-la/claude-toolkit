@@ -301,7 +301,14 @@ def remove_orphans(plan: Plan, prev: dict, root: Path, dry: bool, quiet: bool):
 def _statusline_command() -> str:
     if platform.system() == "Windows":
         # cmd 経由では POSIX の存在ガードが書けないため、絶対パスで直接指す。
-        return f'{sys.executable} "{CLAUDE / "statusline.py"}"'
+        # Claude Code は Windows でも Git Bash 等の POSIX シェル経由で statusLine
+        # コマンドを実行することがあり、その場合バックスラッシュはエスケープとして
+        # 解釈され消えて command not found になる（2026-08-01、311C4W991で実機確認）。
+        # フォワードスラッシュなら python.exe 側も bash 側も問題なく解釈できるため、
+        # どちらのシェル経由でも壊れないようこちらへ統一する。
+        py = sys.executable.replace("\\", "/")
+        script = str(CLAUDE / "statusline.py").replace("\\", "/")
+        return f'{py} "{script}"'
     # statusline.py が無い／リンクが切れていてもエラーにしない。
     return "[ -f ~/.claude/statusline.py ] && python3 ~/.claude/statusline.py || true"
 
