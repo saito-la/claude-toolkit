@@ -97,4 +97,8 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 |---|---|
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |
+| [title-url-bookmarklet](tools/title-url-bookmarklet/README.md) | 現在開いているページの「タイトル + 改行 + URL」をクリップボードにコピーするブックマークレット |
+| [copy-box-path-bookmarklet](tools/copy-box-path-bookmarklet/README.md) | Box.comのファイル/フォルダページで「Box内フォルダパス + URL」をコピーするブックマークレット（Box以外のページではTitle and URLと同じ動作にフォールバック） |
 | [rtk](tools/rtk/README.md) | 2026-08-01に廃止。bash出力が静かに別内容へ置き換わり誤った集計を生む障害のため。2026-07-27〜08-01に導入した人は削除手順を参照 |
+
+ブックマークレット3件は [GitHub Pages: bookmarklets](https://saito-la.github.io/claude-toolkit/) からドラッグ&ドロップでインストールできる（手動貼り付け手順は各ツールのREADME参照）。

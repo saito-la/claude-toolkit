@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>claude-toolkit ブックマークレット</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    max-width: 720px;
+    margin: 2.5rem auto;
+    padding: 0 1.5rem;
+    line-height: 1.7;
+  }
+  h1 {
+    font-size: 1.4rem;
+  }
+  .bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 1rem;
+    border: 1px solid light-dark(#ccc, #444);
+    border-radius: 8px;
+    background: light-dark(#f6f6f6, #1e1e1e);
+    margin: 1.5rem 0;
+  }
+  .bar a {
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background: light-dark(#fff, #2a2a2a);
+    border: 1px solid light-dark(#bbb, #555);
+    border-radius: 6px;
+    text-decoration: none;
+    color: light-dark(#1a1a1a, #eee);
+    font-size: 0.95rem;
+    cursor: grab;
+  }
+  .bar a:active {
+    cursor: grabbing;
+  }
+  code {
+    background: light-dark(#eee, #333);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .desc {
+    font-size: 0.92rem;
+    color: light-dark(#555, #aaa);
+    margin: 0.2rem 0 1.2rem;
+  }
+</style>
+</head>
+<body>
+<h1>claude-toolkit ブックマークレット</h1>
+<p>下のリンクをブラウザのブックマークバーへ<strong>ドラッグ&amp;ドロップ</strong>するとインストールできる（クリックではなく、リンクをつかんでブックマークバーまでドラッグする）。</p>
+
+<div class="bar">
+<a href="javascript:(function(){function copyIt(id){var labeled='Message-ID: <'+id+'>';var done=function(){alert('コピーしました:\n'+labeled);};var fail=function(){window.prompt('コピー失敗。手動でコピーしてください:',labeled);};if(navigator.clipboard&amp;&amp;navigator.clipboard.writeText){navigator.clipboard.writeText(labeled).then(done,fail);}else{fail();}}function findId(text){var m=text.match(/Message-ID:\s*<([^>]+)>/i);return m?m[1]:null;}var onPage=findId(document.body.innerText||document.body.textContent||'');if(onPage){copyIt(onPage);return;}var btn=document.querySelector('button[aria-label=&quot;More message options&quot;]');if(!btn){alert('操作ボタンが見つかりません。手動で「⋮」→「Show original」を開いてから実行してください。');return;}btn.click();setTimeout(function(){var items=Array.from(document.querySelectorAll('[role=&quot;menuitem&quot;]'));var target=items.find(function(el){return (el.textContent||'').trim()==='Show original';});if(!target){alert('メニューに「Show original」が見つかりませんでした。手動で開いてから実行してください。');return;}var capturedWin=null;var originalOpen=window.open;window.open=function(){capturedWin=originalOpen.apply(window,arguments);return capturedWin;};target.click();setTimeout(function(){window.open=originalOpen;if(!capturedWin){alert('新しいタブを検出できませんでした。手動で「⋮」→「Show original」を開いてから実行してください。');return;}var tries=0;var poll=setInterval(function(){tries++;var text='';try{text=capturedWin.document.body?(capturedWin.document.body.innerText||capturedWin.document.body.textContent||''):'';}catch(e){}var id=findId(text);if(id){clearInterval(poll);try{capturedWin.close();}catch(e){}window.focus();setTimeout(function(){copyIt(id);},200);}else if(tries>20){clearInterval(poll);try{capturedWin.close();}catch(e){}alert('新しいタブは開きましたがMessage-IDを検出できませんでした。');}},300);},300);},500);})();">Message-ID取得</a>
+<a href='javascript:var global=window;global.COPY_TO_CLIPBOARD=global.COPY_TO_CLIPBOARD||{};global.COPY_TO_CLIPBOARD.getUrlInfo=function(){var a=new String(document.title);a.allReplace=function(a){var b=this,c;for(c in a)b=b.replace(new RegExp(c,"g"),a[c]);return b}.bind(a);return a.allReplace({":":"\uff1a","\\[":"\uff3b","\\]":"\uff3d"})+"\n"+document.URL}; global.COPY_TO_CLIPBOARD.copyToClipboard=function(){var a=document.createElement("textarea");a.textContent=this.getUrlInfo();var d=document.getElementsByTagName("body")[0];d.appendChild(a);a.select();var b=document.execCommand("copy");d.removeChild(a);return b};global.COPY_TO_CLIPBOARD.copyToClipboard();'>Title and URL</a>
+<a href='javascript:var global = window;global.COPY_TO_CLIPBOARD = global.COPY_TO_CLIPBOARD || {};global.COPY_TO_CLIPBOARD.confirmUrlExistence = function(url){ return fetch(url) .then(response => { if (!response.ok) { throw new Error(response.statusText); } return response.json(); }).catch(error => { console.log("Fetch failed.", error) });};global.COPY_TO_CLIPBOARD.createTargetFolderPath = function(targetFolderId){ return Box.prefetchedData["/app-api/enduserapp/current-user"].preview.appHost + "app-api/enduserapp/folder/" + targetFolderId;};global.COPY_TO_CLIPBOARD.createTargetFilePath = function(targetFileId){ return Box.prefetchedData["/app-api/enduserapp/current-user"].preview.appHost + "app-api/enduserapp/item/f_" + targetFileId + "?format=preview";};global.COPY_TO_CLIPBOARD.getBoxFolderPath = function(json){ return json.folder.path.map(i => i.name).filter((_, idx) => idx > 0);};global.COPY_TO_CLIPBOARD.getUrlInfo=function(){ let a = new String(document.title); a.allReplace = function(a){ let b=this,c; for(c in a)b=b.replace(new RegExp(c,"g"),a[c]);return b }.bind(a); return a.allReplace({":":"\uff1a","\\[":"\uff3b","\\]":"\uff3d"})+"\n"+document.URL;};global.COPY_TO_CLIPBOARD.copyTextAndTitle=function(){ navigator.clipboard.writeText(this.getUrlInfo());};global.COPY_TO_CLIPBOARD.copyToClipboard = async function(){ if (!(/^.*\.box\.com.*$/.test(document.URL))){ console.log("Does not work outside Box web."); this.copyTextAndTitle(); return; }; const fileId = document.URL.split("/").pop().split("?")[0]; if (!(/^\d+$/.test(fileId))){ return; }; const isFolder = /folder/.test(document.URL); let fileName = null; let folderId = fileId; if (!isFolder){ const jsonFile = await this.confirmUrlExistence(this.createTargetFilePath(fileId)); if (!jsonFile){ console.log("Failed to obtain file information."); return; }; fileName = jsonFile.items[0].name; folderId = jsonFile.items[0].parentFolderID; }; const jsonFolder = await this.confirmUrlExistence(this.createTargetFolderPath(folderId)); if (!jsonFolder){ console.log("Failed to obtain folder information."); return; }; const arrayFolder = this.getBoxFolderPath(jsonFolder); const joinFolderName = arrayFolder.join("/"); const folderAndFileName = fileName !== null ? joinFolderName + "/" + fileName : joinFolderName; const boxPathStr = "/Box/" + folderAndFileName + "\n"; const res = boxPathStr + document.URL; navigator.clipboard.writeText(res); console.log(res); return;};global.COPY_TO_CLIPBOARD.copyToClipboard();'>Copy Box path</a>
+</div>
+
+<h2>各ツールの説明</h2>
+<p><strong>Message-ID取得</strong></p>
+<p class="desc">Gmailで開いているメールのMessage-IDを <code>Message-ID: &lt;...&gt;</code> 形式でクリップボードにコピーする。詳細は <a href="../tools/gmail-message-id-bookmarklet/README.md">gmail-message-id-bookmarklet/README.md</a>。</p>
+
+<p><strong>Title and URL</strong></p>
+<p class="desc">現在のページの「タイトル + 改行 + URL」をクリップボードにコピーする。詳細は <a href="../tools/title-url-bookmarklet/README.md">title-url-bookmarklet/README.md</a>。</p>
+
+<p><strong>Copy Box path</strong></p>
+<p class="desc">Box.comのファイル/フォルダページで「Box内フォルダパス + URL」をコピーする（Box以外のページではTitle and URLと同じ動作にフォールバック）。詳細は <a href="../tools/copy-box-path-bookmarklet/README.md">copy-box-path-bookmarklet/README.md</a>。</p>
+
+<h2>手動インストール</h2>
+<p>ドラッグ&amp;ドロップが使えない環境では、各ツールのREADME.mdに記載のコードをブックマークのURL欄に直接貼り付けてもよい。</p>
+</body>
+</html>
