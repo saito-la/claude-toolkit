@@ -9,7 +9,8 @@
 // 6) 変更可能URLをブラウザで開く
 // 7) 処理済みメールを "Scheduling" へ移動・既読化
 //
-// Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>]
+// Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>] [--only <GmailメッセージID>]
+// --only は inbox 内の該当1通のみを処理する（会話経由の単発依頼向け。省略時は従来通り未処理分を全件処理）。
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -23,12 +24,13 @@ import { loadProcessed, markProcessed } from './lib/state.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 function parseArgs(argv) {
-  const a = { dryRun: false, send: false, verbose: false, config: join(HERE, 'config.json') };
+  const a = { dryRun: false, send: false, verbose: false, config: join(HERE, 'config.json'), only: null };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--dry-run') a.dryRun = true;
     else if (argv[i] === '--send') a.send = true;
     else if (argv[i] === '--verbose') a.verbose = true;
     else if (argv[i] === '--config') a.config = resolve(argv[++i]);
+    else if (argv[i] === '--only') a.only = argv[++i];
   }
   return a;
 }
@@ -60,8 +62,15 @@ async function main() {
   const skips = [];
 
   // --- 1) search inbox ---
-  const msgs = await gmail.searchMessages(cfg.gmail.searchQuery, 25);
-  if (args.verbose) console.error(`inbox hits: ${msgs.length}`);
+  const allMsgs = await gmail.searchMessages(cfg.gmail.searchQuery, 25);
+  const msgs = args.only ? allMsgs.filter((m) => m.id === args.only) : allMsgs;
+  if (args.verbose) {
+    console.error(`inbox hits: ${allMsgs.length}`);
+    if (args.only) console.error(`--only ${args.only} で絞り込み: ${msgs.length}件`);
+  }
+  if (args.only && !msgs.length) {
+    console.error(`--only で指定したメッセージがinbox検索結果にありません（既読/処理済み/検索クエリ対象外の可能性）: ${args.only}`);
+  }
 
   let handled = 0;
   for (const { id } of msgs) {

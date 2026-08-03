@@ -51,9 +51,12 @@ cp config.example.json config.json
 node poll.mjs            # 送信あり（config.flags.dryRun=false のとき）＋送信後にブラウザで確認
 node poll.mjs --send     # config に関わらず強制的に送信
 node poll.mjs --dry-run  # 送信せず判定のみ（安全確認・冪等）
+node poll.mjs --send --only <Gmailメッセージid>  # inbox内の該当1通だけを処理（他の未処理案件を巻き込まない）
 ```
 
 都度手動で回す場合は上記コマンドを実行するだけ（launchd 不要）。送信すると回答ページを既定ブラウザで開き、内容確認を促す。
+
+**会話経由で「このメールに回答して」と特定の1通を指定されたときは、必ず `--only <Gmailメッセージid>` を付ける。** 省略すると inbox 内の他の未処理案件（別件の tonton/調整さん）も一括で自動送信されてしまう。
 
 Claude Codeスキルとしての導入方法は `../SKILL.md` および claude-toolkit トップの README を参照。
 
