@@ -15,7 +15,7 @@
   audio-transcribe.py <音声> --model gemini-2.5-pro  # 精度優先でproを使う
 """
 
-import argparse, datetime as _dt, json, os, re, shutil, subprocess, sys, time
+import argparse, datetime as _dt, hashlib, json, os, re, shutil, subprocess, sys, time
 from collections import Counter
 from pathlib import Path
 
@@ -55,8 +55,11 @@ FREE_TIER_RPD = {
 # 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）
 DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.json"
 
-# 使用APIキーの種別（無料枠 / 課金）。main() で判定して表示用に保持する
-_API_KEY_KIND = "不明"
+# 使用APIキーの説明（由来＋指紋）。main() で解決して表示用に保持する。
+# キー形式（AQ. / AIza）で無料枠・課金を判定してはいけない：課金が効くかどうかは
+# キー形式ではなく、キーが紐づく Cloud プロジェクトの課金状態で決まる（形式は無関係）。
+# 形式で「無料枠」と表示していた実装は、課金キーを無料枠と誤表示していた（2026-08-04 修正）。
+_API_KEY_DESC = "不明"
 
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
@@ -156,7 +159,30 @@ def write_daily_tally_report() -> None:
 
 
 class QuotaExhaustedError(RuntimeError):
-    """無料枠の1日リクエスト上限に達した（当日中は再実行しても回復しない）。上位で明確に案内して停止する。"""
+    """再実行しても回復しない 429（無料枠の日次上限 / 前払いクレジット枯渇）。上位で明確に案内して停止する。"""
+
+
+# 429 の原因別メッセージ。両者は対処が正反対（待てば回復 vs 購入が必要）なので必ず区別して出す。
+# 「どちらか分からないまま人が推測する」ことが、無料枠の429を課金枯渇と誤認して
+# 不要課金を招いた原因だった（2026-07-29）。API は理由を返しているので推測は不要。
+_MSG_DAY = (
+    "Gemini API 無料枠の1日リクエスト上限（RPD）に達しました。"
+    "当日中は再実行しても回復しません（リセットは太平洋時間0時＝日本時間16時頃）。"
+    "→ 枠リセット後に再実行するか、課金を有効にしたキーに切り替えてください。"
+    "※ これは課金クレジットの枯渇ではありません。クレジットを購入しても解決しません。"
+)
+_MSG_CREDITS = (
+    "Gemini API の前払いクレジット（Prepay）が枯渇しています。"
+    "購入するまで回復しません（待っても戻りません）。"
+    "→ https://aistudio.google.com/billing で残高を確認・購入してください。"
+    "※ これは無料枠の日次上限ではありません。時間をおいても回復しません。"
+)
+
+
+def _balance_check_hint() -> str:
+    """残高確認コマンドが環境変数で登録されていれば案内文に足す（個人環境固有のパスをここに書かないため）。"""
+    cmd = os.environ.get("GEMINI_BALANCE_CMD", "").strip()
+    return f"\n  残高確認: {cmd}" if cmd else ""
 
 
 def _is_tier_block(e) -> bool:
@@ -167,10 +193,16 @@ def _is_tier_block(e) -> bool:
 
 
 def _quota_kind(e) -> str:
-    """429 のクォータ種別を返す。'day'（日次上限＝当日ハードストップ）／'minute'（分次＝待てば回復）／''。"""
+    """429 のクォータ種別を返す。
+    'credits'（前払いクレジット枯渇＝購入まで回復しない）／'day'（無料枠の日次上限＝翌日回復）／
+    'minute'（分次＝待てば回復）／''（不明）。
+    credits を最初に判定する: クレジット枯渇時にリトライしても無駄で、待っても回復しないため。"""
     if getattr(e, "code", None) != 429:
         return ""
     msg = str(getattr(e, "message", "") or e)
+    low = msg.lower()
+    if "prepayment" in low or "credits are depleted" in low or "credit balance" in low:
+        return "credits"
     if "PerDay" in msg or "requests_per_day" in msg:
         return "day"
     if "PerMinute" in msg or "requests_per_minute" in msg:
@@ -178,6 +210,17 @@ def _quota_kind(e) -> str:
     if "free_tier" in msg or "FreeTier" in msg:   # 期間表記が無い free tier は保守的に日次扱い
         return "day"
     return ""
+
+
+def _raise_if_hard_quota(e):
+    """429 のうち再実行で回復しない種別（クレジット枯渇・無料枠日次上限）を
+    QuotaExhaustedError に変換して投げる。それ以外なら何もしない。
+    generate_content だけでなくアップロード経路からも呼ぶ（生のトレースバックを出さないため）。"""
+    kind = _quota_kind(e)
+    if kind == "credits":
+        raise QuotaExhaustedError(_MSG_CREDITS + _balance_check_hint()) from e
+    if kind == "day":
+        raise QuotaExhaustedError(_MSG_DAY + _balance_check_hint()) from e
 
 
 def _retry_delay_seconds(e):
@@ -204,11 +247,7 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
             code = getattr(e, "code", None)
             if _is_tier_block(e):
                 raise                        # モデル未提供。呼び出し側で格下げ
-            if code == 429 and _quota_kind(e) == "day":
-                raise QuotaExhaustedError(
-                    "Gemini API 無料枠の1日リクエスト上限に達しました。"
-                    "当日中は再実行しても回復しません（リセットは太平洋時間0時＝日本時間16時頃）。"
-                    "billing を有効化するか、枠リセット後に再実行してください。")
+            _raise_if_hard_quota(e)
             transient = code in (429, 500, 503)
             if not transient or attempt == max_attempts:
                 raise
@@ -296,6 +335,7 @@ def write_usage_report(out_dir: Path, stem: str):
                      "sec": round(d["sec"], 1), "est_usd": round(cost, 4)})
     quality = _quality_summary()
     report = {"total_tokens": total_tokens, "est_usd_approx": round(est_cost, 4),
+              "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
               "api_sec": round(api_sec, 1),
               "note": "est_usd はテキスト単価による概算。音声入力の実請求とは異なる。"
@@ -305,7 +345,7 @@ def write_usage_report(out_dir: Path, stem: str):
     path = out_dir / f"{stem}_usage.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     models_used = sorted({r["model"] for r in rows})
-    print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー種別: {_API_KEY_KIND}")
+    print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー: {_API_KEY_DESC}")
     print("\n── トークン消費（Gemini API） ──")
     for r in rows:
         print(f"  {r['stage']:<14}{r['model']:<20}calls={r['calls']:>2}  "
@@ -484,9 +524,24 @@ def _upload(client, path: Path):
     # 非ASCIIファイル名だと google-genai が HTTP ヘッダーのエンコードに失敗するため、
     # パス文字列ではなくファイルオブジェクトを渡す。
     mime = AUDIO_MIME_TYPES.get(path.suffix.lower(), "application/octet-stream")
-    with open(path, "rb") as fh:
-        up = client.files.upload(
-            file=fh, config=types.UploadFileConfig(mime_type=mime, display_name=path.name))
+    # アップロードも 429 を返す（クレジット枯渇はここで先に出る）。generate_content 側と同じ
+    # 分類・リトライを通さないと生のトレースバックになり原因が読めない（2026-08-04 実際に発生）。
+    up = None
+    for attempt in range(1, 4):
+        try:
+            with open(path, "rb") as fh:
+                up = client.files.upload(
+                    file=fh, config=types.UploadFileConfig(mime_type=mime, display_name=path.name))
+            break
+        except (errors.ClientError, errors.ServerError) as e:
+            _raise_if_hard_quota(e)
+            code = getattr(e, "code", None)
+            if code not in (429, 500, 503) or attempt == 3:
+                raise
+            wait = min(60, (_retry_delay_seconds(e) or 15) + 2)
+            print(f"\n  アップロード一時エラー（{code}）。{wait}秒後に再試行 ({attempt}/3)",
+                  end="", flush=True)
+            time.sleep(wait)
     for _ in range(80):
         f = client.files.get(name=up.name)
         if f.state.name == "ACTIVE":
@@ -532,8 +587,17 @@ def transcribe_file(client, path: Path, prompt: str, model: str, stage: str = "t
     return resp.text or ""
 
 
+# 品質不良時に pro へ自動格上げするか。--no-escalate で無効化する。
+# 無効化が必要な理由: コストや課金枠の都合で「このモデルだけで走らせる」と決めた実行を、
+# 自動格上げが黙って破ってしまう（2026-08-04 に実際に発生。flash 指定で走らせたのに
+# 1チャンクの品質不良から pro に格上げされ、pro を使わない前提が崩れた）。
+_ESCALATE_ENABLED = True
+
+
 def escalate(model: str) -> str:
-    """pro でなければ pro へ格上げ。既に pro ならそのまま。"""
+    """pro でなければ pro へ格上げ。既に pro なら、または格上げ無効ならそのまま。"""
+    if not _ESCALATE_ENABLED:
+        return model
     return PRO_MODEL if model != PRO_MODEL else model
 
 
@@ -777,6 +841,27 @@ def _load_api_key_from_config() -> str:
     return ""
 
 
+def _resolve_api_key() -> tuple:
+    """(キー, 由来の説明) を返す。環境変数が設定ファイルより優先される。
+    由来を明示するのは、キーを複数アカウント分（無料枠／課金）持てる構成で
+    「実際にどのキーが使われているか」が分からず 429 の原因を誤認した経緯があるため
+    （2026-07-29 に無料枠の日次上限を課金枯渇と誤認して不要課金、2026-07-30 に
+    dotfiles と ~/.zshrc の二重管理で古いキーが使われていたことが判明）。"""
+    env = os.environ.get("GEMINI_API_KEY")
+    if env:
+        return env, "環境変数 GEMINI_API_KEY"
+    cfg = _load_api_key_from_config()
+    if cfg:
+        return cfg, "~/.config/claude-toolkit/gemini-api-key"
+    return "", "(未設定)"
+
+
+def _key_fingerprint(key: str) -> str:
+    """キー識別用の指紋（sha256 先頭8桁）。値を晒さずに、どのキーが使われたかを
+    後から突き合わせられるようにする（ログ・レポートに残しても安全）。"""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
 def _run_gui() -> tuple:
     import tkinter as tk
     from tkinter import filedialog
@@ -804,7 +889,7 @@ def main():
         description="音声を Gemini で文字起こし（長尺は分割・品質検査・回復つき）")
     p.add_argument("audio", nargs="?", help="音声ファイル または _parts/ ディレクトリ")
     p.add_argument("--output", "-o", help="トランスクリプト出力パス（省略時は自動命名）")
-    p.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY") or _load_api_key_from_config())
+    p.add_argument("--api-key", help="APIキーを明示指定（既定: 環境変数 GEMINI_API_KEY → 設定ファイル）")
     p.add_argument("--chunk-minutes", type=int, default=DEFAULT_CHUNK_MIN, metavar="N",
                    help=f"分割時のチャンク長（分）。デフォルト: {DEFAULT_CHUNK_MIN}")
     p.add_argument("--split", action="store_true", help="最初から分割モードで実行")
@@ -816,6 +901,8 @@ def main():
     p.add_argument("--derive-only", metavar="TRANSCRIPT",
                    help="既存トランスクリプトから verbatim/summary だけ再生成する")
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
+    p.add_argument("--no-escalate", action="store_true",
+                   help=f"品質不良時に {PRO_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
     p.add_argument("--no-organize", action="store_true",
                    help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
     a = p.parse_args()
@@ -823,13 +910,23 @@ def main():
         FREE_TIER_RPD[a.model] = a.rpd
         FREE_TIER_RPD["gemini-2.5-flash"] = a.rpd
 
+    if a.api_key:
+        key_origin = "コマンドライン --api-key"
+    else:
+        a.api_key, key_origin = _resolve_api_key()
     if not a.api_key:
         sys.exit("エラー: Gemini API キーが未設定。環境変数 GEMINI_API_KEY を設定するか、"
                  "~/.config/claude-toolkit/gemini-api-key にキーを保存してください。"
                  "（取得: https://aistudio.google.com/apikey）")
-    global _API_KEY_KIND
-    _API_KEY_KIND = ("無料枠（AQ.形式トークン）" if a.api_key.startswith("AQ.")
-                     else "課金キーの可能性あり（AIza…等。実際の課金状態は要Google AI Studio確認）")
+    global _API_KEY_DESC, _ESCALATE_ENABLED
+    _ESCALATE_ENABLED = not a.no_escalate
+    _API_KEY_DESC = f"{key_origin} ／ 指紋 {_key_fingerprint(a.api_key)}"
+    # 実行の冒頭に出す。途中でエラー終了しても「どのモデル・どのキーで動いたか」が
+    # 必ず残るようにするため（末尾のレポートだけだと失敗時に何も分からない）。
+    esc = f"品質不良時は {PRO_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
+    print(f"── Gemini API ──\n  モデル: {a.model}（文字起こし）／ {POST_MODEL}（後処理）／ {esc}")
+    print(f"  キー: {_API_KEY_DESC}")
+    print("  ※ キー形式では無料枠／課金は判別できない（紐づく Cloud プロジェクトの課金状態で決まる）")
     client = genai.Client(api_key=a.api_key)
 
     # ── derive-only モード ──────────────────────────────────
@@ -939,4 +1036,6 @@ if __name__ == "__main__":
         main()
     except QuotaExhaustedError as e:
         print(f"\n⛔ {e}", file=sys.stderr)
+        print("  成功済みチャンクはキャッシュ済みです。解決後に同じコマンドを再実行すれば、"
+              "未処理のチャンクだけが処理されます（再送信・二重課金は起きません）。", file=sys.stderr)
         sys.exit(2)
