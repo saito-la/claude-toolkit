@@ -49,7 +49,8 @@
 
 ## Step 6: ユーザーへの操作依頼
 - セッション内容を表す短い名前（kebab-case、例: `plant-taro-sprouting-plan`, `gas-member-sync-setup`）を決め、`/rename <名前>` の形で `pbcopy` に入れる（そのまま貼り付けて実行できるように）
-- 以下をユーザーに伝える：
+- ユーザーへは**決めた名前を省略せず全文で示す**。`/rename ...` のように省略しない——クリップボードは貼り付け前に他のコピー操作で上書きされ得るため、省略形だと何を貼るべきだったか復元できなくなる（規約: `~/.claude/conventions/copy-paste-output-format.md`「pbcopy した内容は本文にも省略せずそのまま書く」）。以下の形で伝える：
 ```
-`/rename ...` をクリップボードからそのまま貼り付けて実行してください
+`/rename plant-taro-sprouting-plan` をクリップボードからそのまま貼り付けて実行してください
 ```
+（`plant-taro-sprouting-plan` は例。実際に決めた名前をそのまま入れる）
