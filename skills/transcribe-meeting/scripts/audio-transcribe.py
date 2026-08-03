@@ -24,10 +24,20 @@ from google.genai import errors, types
 
 
 # ── モデル・閾値 ────────────────────────────────────────────────
-PRO_MODEL        = "gemini-pro-latest"  # 精度優先モデル
-FAST_MODEL       = "gemini-3.5-flash"   # 課金枠制限時のフォールバック先（ProがこのAPIキーの枠で使えない場合に自動格下げ）
-TRANSCRIBE_MODEL = PRO_MODEL            # 文字起こし既定。Proが使えれば常にProで実施する（精度優先。齋藤指示 2026-07-30）
-POST_MODEL       = "gemini-3.5-flash"   # verbatim / summary 生成（後処理。文字起こし後の整形のみのため高速モデルで足りる）
+PRO_MODEL        = "gemini-pro-latest"     # 最高精度。無料枠が無く、--model で明示指定したときだけ使う
+ESCALATE_MODEL   = "gemini-3.5-flash"      # 品質不良時の格上げ先。lite より強く、無料枠がある
+FAST_MODEL       = "gemini-3.5-flash"      # このAPIキーの枠で指定モデルが使えない場合の格下げ先
+TRANSCRIBE_MODEL = "gemini-3.5-flash-lite" # 文字起こし既定
+POST_MODEL       = "gemini-3.5-flash"      # verbatim / summary 生成（後処理。整形のみのため高速モデルで足りる）
+#
+# 既定を lite にした根拠（2026-08-04 実測。61分の会議音声・15分×5チャンクで全モデル取り直し）:
+#   gemini-3.5-flash-lite … 全チャンク尺の100%まで到達。1チャンクだけ話者ラベルが落ちたが再試行1回で回復。
+#                           61分を3分15秒・15円（課金キー）。反復ループ・無音からの捏造なし。
+#   gemini-3.1-flash-lite … 5チャンク中2チャンクで改行・話者ラベルを落とし、再試行2回＋再分割でも回復せず
+#                           （短く割っても同じ書式で返す）。要確認3区間・16リクエスト・22円。不採用。
+#   gemini-2.5-flash-lite … 404「no longer available to new users」。当環境では選択肢にならない。
+#   gemini-pro-latest    … 無料枠が無いため方針により不採用（齋藤指示 2026-08-04）。精度も無条件に上ではなく、
+#                           既存の pro キャッシュには15分チャンク2本で約6分ずつの末尾欠落があった。
 # 注: gemini-2.5-* は新規プロジェクト（新規ユーザー）では generateContent 不可（404）。現行世代を既定にする。
 LONG_AUDIO_THRESHOLD_SEC = 15 * 60      # これを超える音声は分割モードへ直行
 DEFAULT_CHUNK_MIN = 15                  # 分割時のチャンク長（分）。大きいほど総リクエスト数が減る
@@ -35,24 +45,51 @@ MIN_CHARS_PER_SEC = 1.5                 # チャンク文字数の下限目安�
 MAX_CHARS_PER_SEC = 20                  # チャンク文字数の上限目安（上回れば尺に対して過大＝内容捏造の疑い。日本語の早口でも実測7-8字/秒程度）
 POST_BLOCK_CHARS = 24000                # verbatim/summary を分割処理する塊サイズ
 
-# 概算単価（USD / 100 万トークン）。正確な請求額ではない。必要に応じ更新。
+# 公式単価（USD / 100 万トークン）。出典 https://ai.google.dev/gemini-api/docs/pricing（2026-08-04 確認）。
+#
+# 音声入力（in_audio）を分けている理由: 文字起こしでは入力のほぼ全量が音声で、音声単価は
+# テキストの 2〜3.3 倍。テキスト単価だけで計算すると実勢を大きく下回る。旧実装は世代前の
+# テキスト単価を放置しており実勢の約 1/3 を表示していて、これが「ほとんど使っていない」という
+# コスト誤認の直接原因になった（2026-08-04 調査。docs/automation/20260804-gemini-transcription-cost-investigation.md）。
+#
+# over_200k は、プロンプトが 200k トークンを超えたときに適用される単価。既定チャンク 15 分は
+# 約 22 万トークンで常にこの帯に入るため、無視すると pro のコストを半分に見誤る。
+# free_tier は無料枠の有無。False のモデルは 1 リクエスト目から課金される。
 PRICING = {
-    "gemini-pro-latest":  {"in": 1.25, "out": 10.0},
-    "gemini-3.5-flash":   {"in": 0.30, "out": 2.50},
-    "gemini-2.5-pro":     {"in": 1.25, "out": 10.0},
-    "gemini-2.5-flash":   {"in": 0.30, "out": 2.50},
+    "gemini-pro-latest":       {"in": 2.00, "in_audio": 2.00, "out": 12.00, "free_tier": False,
+                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
+    "gemini-3.1-pro-preview":  {"in": 2.00, "in_audio": 2.00, "out": 12.00, "free_tier": False,
+                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
+    "gemini-3.6-flash":        {"in": 1.50, "in_audio": 1.50, "out": 7.50,  "free_tier": True},
+    "gemini-3.5-flash":        {"in": 1.50, "in_audio": 1.50, "out": 9.00,  "free_tier": True},
+    "gemini-3.5-flash-lite":   {"in": 0.30, "in_audio": 0.30, "out": 2.50,  "free_tier": True},
+    "gemini-3.1-flash-lite":   {"in": 0.25, "in_audio": 0.50, "out": 1.50,  "free_tier": True},
+    "gemini-2.5-flash":        {"in": 0.30, "in_audio": 1.00, "out": 2.50,  "free_tier": True},
+    "gemini-2.5-flash-lite":   {"in": 0.10, "in_audio": 0.30, "out": 0.40,  "free_tier": True},
 }
 
-# 無料枠の1日リクエスト数（RPD）の目安。Google が随時改定するため正本ではない
-# （2026年に 20→250→1,500 と変動報告あり）。正確な残枠は Google AI Studio のダッシュボードで確認する。
+# 無料枠の1日リクエスト数（RPD）の目安。Google が随時改定するため正本ではない。
+# 公式ドキュメントは 2026-08 時点で per-model の数値を掲載しておらず、
+# 「AI Studio の Rate limit ダッシュボードで確認せよ」としている（https://aistudio.google.com/rate-limit）。
+# ここの値は目安表示専用で、課金・枠の判定に使ってはいけない。
 # 環境変数 GEMINI_FLASH_RPD / GEMINI_PRO_RPD、または --rpd で上書き可。
+_RPD_FLASH = int(os.environ.get("GEMINI_FLASH_RPD", "250"))
+_RPD_PRO = int(os.environ.get("GEMINI_PRO_RPD", "100"))
 FREE_TIER_RPD = {
-    "gemini-3.5-flash":  int(os.environ.get("GEMINI_FLASH_RPD", "250")),
-    "gemini-pro-latest": int(os.environ.get("GEMINI_PRO_RPD", "100")),
-    "gemini-2.5-flash":  int(os.environ.get("GEMINI_FLASH_RPD", "250")),
-    "gemini-2.5-pro":    int(os.environ.get("GEMINI_PRO_RPD", "100")),
+    "gemini-3.6-flash":      _RPD_FLASH,
+    "gemini-3.5-flash":      _RPD_FLASH,
+    "gemini-3.5-flash-lite": _RPD_FLASH,
+    "gemini-3.1-flash-lite": _RPD_FLASH,
+    "gemini-2.5-flash":      _RPD_FLASH,
+    "gemini-2.5-flash-lite": _RPD_FLASH,
+    "gemini-pro-latest":     _RPD_PRO,
+    "gemini-2.5-pro":        _RPD_PRO,
 }
-# 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）
+# 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）。
+# ⚠ このファイルは Mac ごとのローカル記録で、複数の Mac の消費は合算されない。
+# 無料枠の RPD は API キー（Cloud プロジェクト）単位で、どの Mac から投げても同じ枠を食う。
+# 2026-07-29 に片方の Mac の集計だけを見て「課金はほぼ未消費」と判定し、不要課金と誤結論した。
+# 合算する仕組みは無いので、この集計だけで課金・枯渇を判定してはいけない（表示にも明記する）。
 DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.json"
 
 # 使用APIキーの説明（由来＋指紋）。main() で解決して表示用に保持する。
@@ -83,14 +120,32 @@ AUDIO_MIME_TYPES = {
 
 
 # ── Gemini 呼び出し（リトライ＋トークン記録） ──────────────────────
+def _modality_tokens(details, want: str) -> int:
+    """prompt_tokens_details から指定モダリティ（AUDIO / TEXT 等）のトークン数を取り出す。"""
+    total = 0
+    for d in details or []:
+        mod = getattr(d, "modality", None)
+        name = getattr(mod, "name", None) or str(mod or "")
+        if name.upper().endswith(want):
+            total += getattr(d, "token_count", 0) or 0
+    return total
+
+
 def _record_usage(stage: str, model: str, resp, sec: float = 0.0) -> None:
     um = getattr(resp, "usage_metadata", None)
     if not um:
         return
+    prompt = getattr(um, "prompt_token_count", 0) or 0
+    audio = _modality_tokens(getattr(um, "prompt_tokens_details", None), "AUDIO")
+    # thinking トークンは candidates に含まれないことがあるが出力として課金される
+    thoughts = getattr(um, "thoughts_token_count", 0) or 0
     USAGE_LOG.append({
         "stage": stage, "model": model, "sec": round(sec, 2),
-        "prompt": getattr(um, "prompt_token_count", 0) or 0,
+        "prompt": prompt,
+        "prompt_audio": audio,                 # 音声単価で課金される入力トークン
+        "prompt_text": max(0, prompt - audio),
         "candidates": getattr(um, "candidates_token_count", 0) or 0,
+        "thoughts": thoughts,
         "total": getattr(um, "total_token_count", 0) or 0,
     })
 
@@ -120,16 +175,20 @@ def _pt_date() -> str:
 
 
 def _bump_daily_tally(model: str, tokens: int) -> None:
-    """当ツールの1リクエストを PT 日付・モデル別に積算する（他アプリの消費は含まない）。"""
+    """当ツールの1リクエストを PT 日付・モデル別に積算する（他アプリの消費は含まない）。
+    `_machine` にホスト名を記録するのは、後からファイルを見たときに
+    「これはどの Mac の記録か・全体ではない」が分かるようにするため。"""
     try:
         DAILY_TALLY_PATH.parent.mkdir(parents=True, exist_ok=True)
         data = {}
         if DAILY_TALLY_PATH.exists():
             data = json.loads(DAILY_TALLY_PATH.read_text(encoding="utf-8"))
+        data["_machine"] = os.uname().nodename
         m = data.setdefault(_pt_date(), {}).setdefault(model, {"requests": 0, "tokens": 0})
         m["requests"] += 1
         m["tokens"] += int(tokens or 0)
-        for old in sorted(data)[:-14]:       # 直近14日ぶんだけ保持
+        days = sorted(k for k in data if not k.startswith("_"))
+        for old in days[:-14]:               # 直近14日ぶんだけ保持
             data.pop(old, None)
         DAILY_TALLY_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     except (OSError, ValueError):
@@ -146,16 +205,20 @@ def write_daily_tally_report() -> None:
     today = data.get(day, {})
     if not today:
         return
-    print(f"\n── 無料枠の本日消費（ローカル集計・太平洋時間 {day} 基準） ──")
+    host = data.get("_machine", os.uname().nodename)
+    print(f"\n── 本日の消費（この Mac〔{host}〕のみ・太平洋時間 {day} 基準） ──")
     for model, m in sorted(today.items()):
         rpd = FREE_TIER_RPD.get(model)
         req = m["requests"]
         if rpd:
-            print(f"  {model:<20}本日 {req} リクエスト / 目安 {rpd}（残り約 {max(0, rpd - req)}）"
+            print(f"  {model:<22}本日 {req} リクエスト / RPD目安 {rpd}（残り約 {max(0, rpd - req)}）"
                   f"  累計トークン {m['tokens']:,}")
         else:
-            print(f"  {model:<20}本日 {req} リクエスト  累計トークン {m['tokens']:,}")
-    print("  ※ 当ツール経由の集計。RPD目安はGoogleが随時改定するため、正確な残枠は Google AI Studio で確認。")
+            print(f"  {model:<22}本日 {req} リクエスト  累計トークン {m['tokens']:,}")
+    print("  ※ この集計は当ツール経由・この Mac だけのもの。無料枠（RPD）は API キー単位で、")
+    print("     他の Mac からの消費も同じ枠を食うが合算されない。RPD目安も Google が随時改定する。")
+    print("     → 枠・残高の判定にこの数字を使わないこと。実測は gemini-key-status.py、")
+    print("       残枠は https://aistudio.google.com/rate-limit で確認する。")
 
 
 class QuotaExhaustedError(RuntimeError):
@@ -311,6 +374,21 @@ def write_quality_report():
         print(f"  ⚠ 要確認区間: {', '.join(q['flagged_chunks'])}")
 
 
+def _call_cost(u: dict) -> float:
+    """1リクエストの概算課金額（USD）。音声／テキストを別単価で、200k 超は上位帯の単価で計算する。
+    階層はリクエスト単位で決まるため、モデル別に合算してから掛けると誤る（合算すると全リクエストが
+    200k 超に見える）。ここで1件ずつ計算し、呼び出し側で足し上げる。"""
+    pr = PRICING.get(u["model"])
+    if not pr:
+        return 0.0
+    if u["prompt"] > 200_000 and pr.get("over_200k"):
+        pr = {**pr, **pr["over_200k"]}
+    out_tokens = u.get("candidates", 0) + u.get("thoughts", 0)
+    return (u.get("prompt_audio", 0) / 1e6 * pr["in_audio"]
+            + u.get("prompt_text", u["prompt"]) / 1e6 * pr["in"]
+            + out_tokens / 1e6 * pr["out"])
+
+
 def write_usage_report(out_dir: Path, stem: str):
     """stage 別・モデル別のトークン消費・所要時間・品質を表示し、_usage.json に保存する。"""
     if not USAGE_LOG and not QUALITY_LOG:
@@ -318,27 +396,32 @@ def write_usage_report(out_dir: Path, stem: str):
     by_key: dict = {}
     for u in USAGE_LOG:
         d = by_key.setdefault((u["stage"], u["model"]),
-                              {"calls": 0, "prompt": 0, "candidates": 0, "total": 0, "sec": 0.0})
+                              {"calls": 0, "prompt": 0, "prompt_audio": 0, "candidates": 0,
+                               "thoughts": 0, "total": 0, "sec": 0.0, "usd": 0.0})
         d["calls"] += 1
-        for f in ("prompt", "candidates", "total"):
-            d[f] += u[f]
+        for f in ("prompt", "prompt_audio", "candidates", "thoughts", "total"):
+            d[f] += u.get(f, 0)
         d["sec"] += u.get("sec", 0.0)
+        d["usd"] += _call_cost(u)
     total_tokens = sum(u["total"] for u in USAGE_LOG)
     api_sec = sum(u.get("sec", 0.0) for u in USAGE_LOG)
     elapsed = time.time() - _START
     rows, est_cost = [], 0.0
     for (stage, model), d in sorted(by_key.items()):
-        pr = PRICING.get(model, {"in": 0.0, "out": 0.0})
-        cost = d["prompt"] / 1e6 * pr["in"] + d["candidates"] / 1e6 * pr["out"]
-        est_cost += cost
+        est_cost += d["usd"]
         rows.append({"stage": stage, "model": model, **d,
-                     "sec": round(d["sec"], 1), "est_usd": round(cost, 4)})
+                     "sec": round(d["sec"], 1), "est_usd": round(d.pop("usd"), 4)})
+    billable = [m for m in sorted({r["model"] for r in rows})
+                if not PRICING.get(m, {}).get("free_tier", True)]
     quality = _quality_summary()
     report = {"total_tokens": total_tokens, "est_usd_approx": round(est_cost, 4),
+              "est_jpy_approx": round(est_cost * 155),
               "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
+              "no_free_tier_models": billable,
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
               "api_sec": round(api_sec, 1),
-              "note": "est_usd はテキスト単価による概算。音声入力の実請求とは異なる。"
+              "note": "est_usd は公式単価（音声入力単価・200k超の階層を反映）による概算。"
+                      "無料枠の消化分は差し引いていないため、無料枠内なら実請求は 0 になる。"
                       "elapsed_sec は本コマンドの総経過時間、api_sec は Gemini 応答待ちの合計。",
               "quality": quality, "by_stage": rows,
               "quality_detail": QUALITY_LOG, "calls": USAGE_LOG}
@@ -348,10 +431,14 @@ def write_usage_report(out_dir: Path, stem: str):
     print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー: {_API_KEY_DESC}")
     print("\n── トークン消費（Gemini API） ──")
     for r in rows:
-        print(f"  {r['stage']:<14}{r['model']:<20}calls={r['calls']:>2}  "
-              f"total={r['total']:>9,}  (in={r['prompt']:,} / out={r['candidates']:,})  "
+        print(f"  {r['stage']:<14}{r['model']:<22}calls={r['calls']:>2}  "
+              f"total={r['total']:>9,}  (in={r['prompt']:,}〔音声 {r['prompt_audio']:,}〕"
+              f" / out={r['candidates'] + r['thoughts']:,})  "
               f"{r['sec']:>6.1f}秒  ~${r['est_usd']}")
-    print(f"  合計 {total_tokens:,} トークン ／ 概算 ${round(est_cost, 4)}")
+    print(f"  合計 {total_tokens:,} トークン ／ 概算 ${round(est_cost, 4)}（約 {round(est_cost * 155):,} 円）")
+    print("  ※ 公式単価による概算（音声入力単価・200k超の階層を反映）。無料枠で賄えた分は実請求されない。")
+    if billable:
+        print(f"  ⚠ 無料枠が無いモデルを使用: {', '.join(billable)}（1リクエスト目から課金）")
     print(f"\n── 所要時間 ──")
     print(f"  総経過 {_fmt_dur(elapsed)}（うち Gemini 応答待ち {_fmt_dur(api_sec)}）")
     write_quality_report()
@@ -400,8 +487,82 @@ def _detect_short_cycle_loop(text: str) -> str:
     return ""
 
 
-def check_quality(text: str, min_chars: int = None, max_chars: int = None) -> tuple:
-    """文字化け・ループ・途切れ・捏造を検出。(ok, reason) を返す。"""
+TS_RE = re.compile(r"\[(\d{1,3}):(\d{2})\]")
+# 末尾欠落と判定する被覆率。チャンク尺のこの割合まで最終タイムスタンプが届かなければ失格。
+# 0.75 なのは、末尾の無音が長い区間での誤検出を避けつつ（15分チャンクなら3分45秒の無音まで許容）、
+# 実際に起きた「後半6分が丸ごと消える」規模の欠落は確実に捕まえるため。
+MIN_TS_COVERAGE = 0.75
+
+
+def _detect_truncation(text: str, duration_sec: float) -> str:
+    """タイムスタンプが尺の末尾まで届いているかで、後半の欠落を検出する。
+    文字数だけの下限判定（MIN_CHARS_PER_SEC=1.5）では緩すぎて末尾欠落を通してしまう：
+    2026-08-04 に pro のキャッシュを検証したところ、15分チャンクの 9:07 / 8:48 で
+    出力が終わっている（各約6分の欠落）のに「合格」扱いでキャッシュされていた。"""
+    if not duration_sec or duration_sec < 300:
+        return ""
+    ts = [int(a) * 60 + int(b) for a, b in TS_RE.findall(text)]
+    if not ts:
+        return "タイムスタンプが1つも無く、どこまで文字起こしされたか検証できない"
+    last = max(ts)
+    if last < duration_sec * MIN_TS_COVERAGE:
+        return (f"最終タイムスタンプ {last//60}:{last%60:02d} が尺 "
+                f"{int(duration_sec)//60}:{int(duration_sec)%60:02d} に対して早すぎる"
+                f"（被覆 {last/duration_sec:.0%}）＝後半の欠落の疑い")
+    return ""
+
+
+# 書式崩れの理由に付ける印。再分割しても直らない種類の失敗であることを示す
+# （2026-08-04 実測：1行化した区間を 15分→7分→4分 と割っても同じモデルは同じように1行で返した）。
+FORMAT_PREFIX = "書式崩れ: "
+# 書式チェックを適用する最小の尺（秒）。ffmpeg の分割は末尾に 0 秒前後の端切れを作ることがあり、
+# そこに「行数が少ない」を適用すると無限に再試行して無駄なリクエストを消費する。
+FORMAT_CHECK_MIN_SEC = 60
+
+
+def _detect_format_break(text: str, duration_sec: float = None) -> str:
+    """話者ラベル・改行というプロンプトの指定が守られているかを検査する。
+    守られないと後段の話者比定（apply-speaker-mapping.py）が成立しない。
+    lite 系は 5チャンク中2チャンク程度でこれを落とす（2026-08-04 実測）。"""
+    if duration_sec is not None and duration_sec < FORMAT_CHECK_MIN_SEC:
+        return ""                              # 短い端切れ区間は数行で正常
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    if len(lines) < 5:
+        return FORMAT_PREFIX + f"改行されておらず1塊で出力されている（{len(lines)}行）＝話者分離が失われている"
+    labels = len(re.findall(r"話者[A-Z]", text))
+    if labels < 3:
+        return FORMAT_PREFIX + f"話者ラベルがほとんど付与されていない（{labels}個 / {len(lines)}行）"
+    return ""
+
+
+def _shift_timestamps(text: str, offset_sec: float) -> str:
+    """[MM:SS] を offset_sec だけ後ろにずらす（再分割したサブ区間を親の時間軸に戻す）。"""
+    if not offset_sec:
+        return text
+    off = int(offset_sec)
+
+    def _fix(m):
+        t = int(m.group(1)) * 60 + int(m.group(2)) + off
+        return f"[{t // 60}:{t % 60:02d}]"
+
+    return TS_RE.sub(_fix, text)
+
+
+def normalize_lines(text: str) -> str:
+    """1塊で返された出力を、タイムスタンプの直前で改行して行に戻す。
+    モデルが改行指定を無視しても、[MM:SS] が入っていれば発言の区切りは復元できる。
+    再試行より確実で無料（2026-08-04 実測：1行化は再試行・再分割では直らなかった）。
+    ただし話者ラベルまでは復元できないため、書式チェック自体は残す。"""
+    t = (text or "").strip()
+    lines = [l for l in t.splitlines() if l.strip()]
+    if len(lines) > 2 or len(TS_RE.findall(t)) < 5:
+        return text
+    return TS_RE.sub(lambda m: "\n" + m.group(0), t).strip()
+
+
+def check_quality(text: str, min_chars: int = None, max_chars: int = None,
+                  duration_sec: float = None) -> tuple:
+    """文字化け・ループ・途切れ・捏造・末尾欠落・書式崩れを検出。(ok, reason) を返す。"""
     t = (text or "").strip()
     if not t:
         return False, "空の出力"
@@ -418,6 +579,12 @@ def check_quality(text: str, min_chars: int = None, max_chars: int = None) -> tu
         return False, f"文字数が想定を大きく下回る（{len(t)}字 / 目安{min_chars}字）＝途切れの疑い"
     if max_chars and len(re.sub(r'\s', '', t)) > max_chars:   # 尺に対して多すぎ＝内容捏造の疑い
         return False, f"文字数が尺に対して過大（{len(t)}字 / 上限目安{max_chars}字）＝無音・短尺区間からの内容捏造（ハルシネーション）の疑い"
+    reason = _detect_truncation(t, duration_sec)              # 末尾欠落（タイムスタンプ被覆）
+    if reason:
+        return False, reason
+    reason = _detect_format_break(t, duration_sec)            # 話者ラベル・改行の崩れ
+    if reason:
+        return False, reason
     lines = [l.strip() for l in t.splitlines() if l.strip()]  # 短行が過半（既存）
     if len(lines) > 20:
         short = sum(1 for l in lines if len(l) <= 3)
@@ -595,10 +762,13 @@ _ESCALATE_ENABLED = True
 
 
 def escalate(model: str) -> str:
-    """pro でなければ pro へ格上げ。既に pro なら、または格上げ無効ならそのまま。"""
+    """品質不良時の格上げ先を返す。格上げ無効なら、または既に格上げ先以上ならそのまま。
+    格上げ先を pro ではなく ESCALATE_MODEL にしているのは、無料枠の無いモデルへ自動で
+    移ると「無料枠のあるモデルだけを使う」方針（齋藤指示 2026-08-04）が黙って破られるため。
+    pro を使いたいときは --model gemini-pro-latest で明示する。"""
     if not _ESCALATE_ENABLED:
         return model
-    return PRO_MODEL if model != PRO_MODEL else model
+    return ESCALATE_MODEL if model not in (ESCALATE_MODEL, PRO_MODEL) else model
 
 
 def transcribe_with_recovery(client, path: Path, prompt: str, model: str,
@@ -610,22 +780,33 @@ def transcribe_with_recovery(client, path: Path, prompt: str, model: str,
     attempts = []
     for attempt in range(2):                       # 初回＋再試行1
         m = model if attempt == 0 else escalate(model)
-        text = collapse_loops(transcribe_file(client, path, prompt, m, stage))
-        ok, reason = check_quality(text, min_chars=min_chars, max_chars=max_chars)
+        text = normalize_lines(collapse_loops(transcribe_file(client, path, prompt, m, stage)))
+        ok, reason = check_quality(text, min_chars=min_chars, max_chars=max_chars,
+                                   duration_sec=duration_sec)
         if ok:
             _record_quality(path.name, duration_sec, text, True, "",
                             attempt + 1, escalated=(m != model))
             return text
         print(f"    ⚠ 品質不良: {reason} → 再試行（{attempt + 1}/2）")
         attempts.append((text, reason))
-    # 再分割（5分より長く、深さ上限未満なら半分に割って個別処理。子区間が各自品質を記録）
-    if duration_sec and duration_sec > 300 and depth < 2:
+    # 再分割（5分より長く、深さ上限未満なら半分に割って個別処理。子区間が各自品質を記録）。
+    # 書式崩れ（話者ラベル・改行）は再分割しても直らないので試さない：同じモデルは短くしても
+    # 同じ書式で返す。無駄なリクエストを増やすだけになる（2026-08-04 実測）。
+    format_only = all(r.startswith(FORMAT_PREFIX) for _, r in attempts)
+    if duration_sec and duration_sec > 300 and depth < 2 and not format_only:
         print(f"    ↳ {path.name} をさらに分割して再処理")
         subs = split_audio(path, max(150, int(duration_sec / 2)), tag=f"sub{depth}")
-        return "\n".join(
-            transcribe_with_recovery(client, c, prompt, escalate(model), stage,
-                                     probe_duration(c), depth + 1)
-            for c in subs)
+        # 各サブ区間のタイムスタンプは 0:00 から振り直されるため、親区間の先頭からの
+        # 経過秒でずらしてから連結する。ずらさないと連結結果の最終タイムスタンプが尺に
+        # 届かず、次回実行時にキャッシュ検証が必ず失格を出して永久に取り直しになる。
+        out, offset = [], 0.0
+        for c in subs:
+            d = probe_duration(c)
+            out.append(_shift_timestamps(
+                transcribe_with_recovery(client, c, prompt, escalate(model), stage, d, depth + 1),
+                offset))
+            offset += d or 0
+        return "\n".join(out)
     text, reason = max(attempts, key=lambda a: len(a[0]))
     print(f"    ✗ 品質を確保できず。該当区間に注記を付与: {reason}")
     _record_quality(path.name, duration_sec, text, False, reason,
@@ -659,11 +840,13 @@ def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
         cache = _chunk_cache_path(chunk)
         if cache.exists() and cache.stat().st_size > 0:
             cached = cache.read_text(encoding="utf-8")
-            ok, _ = check_quality(cached, min_chars=min_chars, max_chars=max_chars)
+            ok, why = check_quality(cached, min_chars=min_chars, max_chars=max_chars,
+                                    duration_sec=d)
             if ok:                                    # 品質を満たす済チャンクのみ再利用
                 print(f"[{i + 1}/{n}] キャッシュ再利用: {cache.name}")
                 parts.append(f"## Part {i + 1} — {chunk.name}\n\n{cached}")
                 continue
+            print(f"[{i + 1}/{n}] キャッシュを破棄して取り直し（{why}）")
         print(f"[{i + 1}/{n}]", end=" ")
         text = transcribe_with_recovery(client, chunk, prompt, model, "transcribe", d)
         cache.write_text(text, encoding="utf-8")      # チェックポイント保存
@@ -902,7 +1085,7 @@ def main():
                    help="既存トランスクリプトから verbatim/summary だけ再生成する")
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
     p.add_argument("--no-escalate", action="store_true",
-                   help=f"品質不良時に {PRO_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
+                   help=f"品質不良時に {ESCALATE_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
     p.add_argument("--no-organize", action="store_true",
                    help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
     a = p.parse_args()
@@ -923,7 +1106,7 @@ def main():
     _API_KEY_DESC = f"{key_origin} ／ 指紋 {_key_fingerprint(a.api_key)}"
     # 実行の冒頭に出す。途中でエラー終了しても「どのモデル・どのキーで動いたか」が
     # 必ず残るようにするため（末尾のレポートだけだと失敗時に何も分からない）。
-    esc = f"品質不良時は {PRO_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
+    esc = f"品質不良時は {ESCALATE_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
     print(f"── Gemini API ──\n  モデル: {a.model}（文字起こし）／ {POST_MODEL}（後処理）／ {esc}")
     print(f"  キー: {_API_KEY_DESC}")
     print("  ※ キー形式では無料枠／課金は判別できない（紐づく Cloud プロジェクトの課金状態で決まる）")
@@ -998,7 +1181,7 @@ def main():
             print(f"単一ファイルモード: {target.name}")
             text = collapse_loops(transcribe_file(client, target, prompt, model))
             min_chars = int(duration * MIN_CHARS_PER_SEC) if duration else None
-            ok, why = check_quality(text, min_chars=min_chars)
+            ok, why = check_quality(text, min_chars=min_chars, duration_sec=duration)
             if ok:
                 result = text
                 _record_quality(target.name, duration, text, True, "", 1)
