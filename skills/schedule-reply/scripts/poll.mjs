@@ -11,8 +11,14 @@
 //
 // Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>] [--only <GmailメッセージID>]
 // --only は inbox 内の該当1通のみを処理する（会話経由の単発依頼向け。省略時は従来通り未処理分を全件処理）。
+//
+// 個人データ（config.json・state.jsonl・logs/）は config ファイルと同じディレクトリに置く。
+// 既定は ~/.config/schedule-reply/config.json（あればそれ、無ければスクリプト同梱の config.json）。
+// スクリプト本体はリポジトリ、個人データはリポジトリ外——と分けておくと、
+// git pull・再clone・skillの再配置で個人設定と処理済み記録が巻き添えにならない。
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { makeClient, makeGmail, makeCalendar, parseMessage } from './lib/google.mjs';
 import { classify } from './lib/classify.mjs';
@@ -22,9 +28,11 @@ import { printSummary, candidateLabel, makeFileLogger } from './lib/logger.mjs';
 import { loadProcessed, markProcessed } from './lib/state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const USER_CONFIG = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'schedule-reply', 'config.json');
+const DEFAULT_CONFIG = existsSync(USER_CONFIG) ? USER_CONFIG : join(HERE, 'config.json');
 
 function parseArgs(argv) {
-  const a = { dryRun: false, send: false, verbose: false, config: join(HERE, 'config.json'), only: null };
+  const a = { dryRun: false, send: false, verbose: false, config: DEFAULT_CONFIG, only: null };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--dry-run') a.dryRun = true;
     else if (argv[i] === '--send') a.send = true;
@@ -38,14 +46,17 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
   if (!existsSync(args.config)) {
-    console.error(`config not found: ${args.config}\n→ cp config.example.json config.json し、パスを確認してください。`);
+    console.error(`config not found: ${args.config}\n→ mkdir -p ${dirname(USER_CONFIG)} && cp ${join(HERE, 'config.example.json')} ${USER_CONFIG} して自分の値を設定してください。`);
     process.exit(1);
   }
   const cfg = JSON.parse(readFileSync(args.config, 'utf8'));
   // --dry-run forces judge-only; --send forces live; otherwise config decides (safe default).
   const dryRun = args.dryRun ? true : args.send ? false : (cfg.flags?.dryRun ?? true);
-  const statePath = join(HERE, 'state.jsonl');
-  const flog = makeFileLogger(join(HERE, 'logs', 'scheduler.log'));
+  // Personal data lives with the config file, not with the script (see header).
+  const dataDir = dirname(args.config);
+  const statePath = join(dataDir, 'state.jsonl');
+  const flog = makeFileLogger(join(dataDir, 'logs', 'scheduler.log'));
+  if (args.verbose) console.error(`config: ${args.config}`);
 
   // --- Google clients ---
   const gClient = makeClient({ credentialsPath: cfg.gmail.credentialsPath, oauthClientPath: cfg.gmail.oauthClientPath });

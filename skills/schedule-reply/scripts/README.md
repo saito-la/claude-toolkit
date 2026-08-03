@@ -33,26 +33,41 @@ tonton のタイムラインはセルがクリック不能（0サイズspan・JS
 概況で、実体は30分枠単位。tonton は後から編集するため `browser.tontonEditPassword` の設定必須
 （同名＋パスワードで既存回答を削除して上書きするため。未設定だと再回答が重複登録になる）。
 
+## コードと個人データの分離
+
+スクリプト本体はリポジトリ、個人データはリポジトリ外に置く。
+
+- **コード（正本）** — このディレクトリ（`skills/schedule-reply/scripts/`）。git 管理。
+- **個人データ** — `~/.config/schedule-reply/`（`XDG_CONFIG_HOME` があればそちら）。`config.json`・`state.jsonl`（処理済み記録）・`logs/` の3点。
+
+`poll.mjs` は `~/.config/schedule-reply/config.json` があればそれを既定の config とし、**`state.jsonl` と `logs/` も config と同じディレクトリに置く**。無ければスクリプト同梱の `config.json` にフォールバックするので、単体で自己完結させたい使い方も従来どおり動く。
+
+分けておく理由＝`git pull`・再 clone・skill の再配置（symlink ⇄ copy）で、個人設定と「どのメールに回答済みか」の記録が巻き添えにならないため。処理済み記録が消えると同じ日程調整に二重回答する。
+
 ## セットアップ
 
 ```bash
-cd <このディレクトリ（skills/schedule-reply/scripts）>
+SCRIPTS=~/.claude/skills/schedule-reply/scripts   # skill の配置先
 
 # 1) 依存（Playwright）。ネットワーク不可時はグローバル版をリンク（下記フォールバック）
-npm install
+cd "$SCRIPTS" && npm install
 
-# 2) 設定ファイル
-cp config.example.json config.json
+# 2) 設定ファイル（個人データ側に作る）
+mkdir -p ~/.config/schedule-reply
+cp "$SCRIPTS/config.example.json" ~/.config/schedule-reply/config.json
+chmod 700 ~/.config/schedule-reply && chmod 600 ~/.config/schedule-reply/config.json
 #   - displayName / 除外リスト / businessStart-End を自分の値に設定
 #   - gmail/calendar の credentialsPath を自分のGoogle OAuth認証情報のパスに合わせる
 #   - flags.dryRun を false にすると送信あり（既定運用）。true なら判定のみ
 
-# 3) 実行
-node poll.mjs            # 送信あり（config.flags.dryRun=false のとき）＋送信後にブラウザで確認
-node poll.mjs --send     # config に関わらず強制的に送信
-node poll.mjs --dry-run  # 送信せず判定のみ（安全確認・冪等）
-node poll.mjs --send --only <Gmailメッセージid>  # inbox内の該当1通だけを処理（他の未処理案件を巻き込まない）
+# 3) 実行（cwd 非依存。config は自動で ~/.config/schedule-reply/config.json が使われる）
+node "$SCRIPTS/poll.mjs"            # 送信あり（config.flags.dryRun=false のとき）＋送信後にブラウザで確認
+node "$SCRIPTS/poll.mjs" --send     # config に関わらず強制的に送信
+node "$SCRIPTS/poll.mjs" --dry-run  # 送信せず判定のみ（安全確認・冪等）
+node "$SCRIPTS/poll.mjs" --send --only <Gmailメッセージid>  # inbox内の該当1通だけを処理（他の未処理案件を巻き込まない）
 ```
+
+`--verbose` を付けると、実際に読んだ config のパスが1行目に出る。config を複数使い分けるときは `--config <path>` で指定する（`state.jsonl`・`logs/` もそのパスの隣に作られる）。
 
 都度手動で回す場合は上記コマンドを実行するだけ（launchd 不要）。送信すると回答ページを既定ブラウザで開き、内容確認を促す。
 
@@ -89,17 +104,17 @@ relabel / 既読化に必須。使用中のGmailトークンが `gmail.readonly 
 
 ### launchd 定期実行
 
-15分間隔でポーリングする（任意・省略可）。`schedule-reply.plist.example` の `<ユーザー名>` を自分のものに置き換えてから使う。
+15分間隔でポーリングする（任意・省略可）。`schedule-reply.plist.example` の `YOUR-USERNAME` を自分のものに置き換えてから使う。
 
 ```bash
-cp schedule-reply.plist.example ~/Library/LaunchAgents/com.crpc-scheduler.plist
-# ~/Library/LaunchAgents/com.crpc-scheduler.plist 内のパスを自分の環境に合わせて編集してから：
-launchctl load  ~/Library/LaunchAgents/com.crpc-scheduler.plist   # 登録・起動
-launchctl list | grep crpc-scheduler                                # 稼働確認
-tail -f logs/run.log                                                # 実行ログ
+cp schedule-reply.plist.example ~/Library/LaunchAgents/com.schedule-reply.plist
+# ~/Library/LaunchAgents/com.schedule-reply.plist 内の YOUR-USERNAME を置換してから：
+launchctl load  ~/Library/LaunchAgents/com.schedule-reply.plist   # 登録・起動
+launchctl list | grep schedule-reply                                # 稼働確認
+tail -f ~/.config/schedule-reply/logs/launchd.log                   # 実行ログ
 
 # 停止・解除
-launchctl unload ~/Library/LaunchAgents/com.crpc-scheduler.plist
+launchctl unload ~/Library/LaunchAgents/com.schedule-reply.plist
 ```
 
 `config.flags.dryRun=true` の間は launchd 実行でも判定のみで送信しない（安全既定）。
@@ -114,7 +129,7 @@ launchctl unload ~/Library/LaunchAgents/com.crpc-scheduler.plist
 - **除外**：`config.exclude.senders`（送信者）・`config.exclude.subjectPatterns`（件名パターン）に一致するメール。ログにスキップ理由を残す。
 - 検知は**メインメッセージ（引用・過去スレッドを除いた本文冒頭）**で判定。対象URLと入力依頼の両方がメイン部にある場合のみ動作。議事録・通知・返信引用にだけ URL があるメールは自動スキップ（メインが日程調整依頼でないため）。
 - tonton は**ログインしない**（公開ページ扱い）。
-- 認証情報（トークン・config.json・Cookie・state・logs）は **`.gitignore` 済み**（コミット禁止）。
+- 個人データ（`config.json`・`state.jsonl`・`logs/`）は `~/.config/schedule-reply/` に置きリポジトリに入れない（上記「コードと個人データの分離」）。同名ファイルをこのディレクトリに置いた場合に備えて `.gitignore` にも入れてある。
 
 ## 判定ロジック
 
@@ -126,14 +141,16 @@ launchctl unload ~/Library/LaunchAgents/com.crpc-scheduler.plist
 
 ## ファイル構成
 
+コード（git 管理）:
+
 ```
 schedule-reply/
 ├── SKILL.md                     # Claude Codeスキル（呼び出し口）
 └── scripts/
     ├── poll.mjs                    # オーケストレータ（エントリ）
-    ├── run.sh                      # launchd 起動ラッパ（PATH整備＋ログ）
+    ├── run.sh                      # launchd 起動ラッパ（PATH整備のみ）
     ├── schedule-reply.plist.example # launchd定義のひな型（要パス置換）
-    ├── config.example.json         # 設定ひな型（config.json は gitignore）
+    ├── config.example.json         # 設定ひな型
     └── lib/
         ├── google.mjs              # OAuth更新＋Gmail/Calendar REST（fetchのみ・依存ゼロ）
         ├── classify.mjs            # ツール判別・入力依頼判定・除外
@@ -143,6 +160,15 @@ schedule-reply/
         ├── adapters/chousei.mjs    # 調整さん（埋め込みJSON＋表UI）
         ├── logger.mjs              # 要約出力＋JSONLログ
         └── state.mjs               # 処理済みメールの重複防止
+```
+
+個人データ（リポジトリ外・バックアップ対象）:
+
+```
+~/.config/schedule-reply/
+├── config.json      # 自分の設定（chmod 600 推奨）
+├── state.jsonl      # 処理済みメール記録（消すと二重回答の恐れ）
+└── logs/scheduler.log
 ```
 
 ## トラブルシュート

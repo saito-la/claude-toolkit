@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  無人巡回（任意）。YOUR-USERNAME を自分のものに置き換えてから
+  ~/Library/LaunchAgents/com.schedule-reply.plist として配置する。
+  run.sh のパスは skill の配置先（既定は ~/.claude/skills/schedule-reply/scripts）。
+  ログは個人データ側（~/.config/schedule-reply/logs/）へ集約する。
+-->
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.crpc-scheduler</string>
+    <string>com.schedule-reply</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/<ユーザー名>/crpc-tools/tools/schedule-reply/run.sh</string>
+        <string>/Users/YOUR-USERNAME/.claude/skills/schedule-reply/scripts/run.sh</string>
     </array>
 
     <!-- 15分ごとにポーリング（config.flags.dryRun が true の間は判定のみ・送信しない） -->
@@ -26,8 +32,8 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/<ユーザー名>/crpc-tools/tools/schedule-reply/logs/launchd.log</string>
+    <string>/Users/YOUR-USERNAME/.config/schedule-reply/logs/launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/<ユーザー名>/crpc-tools/tools/schedule-reply/logs/launchd.log</string>
+    <string>/Users/YOUR-USERNAME/.config/schedule-reply/logs/launchd.log</string>
 </dict>
 </plist>

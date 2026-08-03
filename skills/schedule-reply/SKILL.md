@@ -33,14 +33,22 @@ tonton／調整さんの日程調整入力依頼メールを検知し、カレ�
 
 ## 前提条件
 
-- `scripts/config.json` が存在（無ければ `cp scripts/config.example.json scripts/config.json` して自分の値を設定）。既定 `flags.dryRun=false`＝送信あり。
-- Playwright がローカル解決可能（`scripts/node_modules/playwright`。無ければ README のフォールバックで symlink）。
+- `~/.config/schedule-reply/config.json` が存在（無ければ README「セットアップ」に従って `scripts/config.example.json` から作る）。既定 `flags.dryRun=false`＝送信あり。
+- Playwright がローカル解決可能（`scripts/node_modules/playwright`。無ければ README のフォールバックで symlink）。ブラウザ本体が無い場合は `npx playwright install chromium`。
 - カレンダー・Gmailのトークンが有効。切れたら認証設定に従い再認証。
+
+## コードと個人データの分離
+
+- **コード** — この skill ディレクトリ（git 管理）。
+- **個人データ** — `~/.config/schedule-reply/` に `config.json`・`state.jsonl`（処理済み記録）・`logs/`。
+
+`state.jsonl` は「どのメールに回答済みか」の記録で、**消えると同じ日程調整に二重回答する**。skill を配置し直すとき・別マシンへ移すときは、リポジトリではなく `~/.config/schedule-reply/` を持っていく。
 
 ## 注意
 
 - 実在ポーリング（メール差出人に見える）への書き込みを伴う。誤検知が疑わしいときは先に `--dry-run` で確認する。
 - tonton は同名＋パスワード（`config.browser.tontonEditPassword`）で既存回答を削除して上書きするため再実行しても重複しない。
+- 誤って送信した回答は取り消せる。tonton は回答ページで自分の名前の削除リンク→編集パスワード入力。調整さんは自分の名前をクリック→「登録を削除」。
 - 無人自動巡回は launchd（`scripts/schedule-reply.plist.example`）で別途設定。本スキルは会話経由の都度実行用。
 
 ## 参照

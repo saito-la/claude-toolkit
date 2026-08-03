@@ -151,6 +151,14 @@ summary は内容から生成したタイトル（H1）が自動で付く（凡�
 open <stem>/<stem>_transcript.txt <stem>/<stem>_verbatim.txt <stem>_summary.md
 ```
 
+## Step 6: 正本ディレクトリへの格納
+
+音声ファイルの既定の置き場（Downloads 等）は一時置き場であり、最終保存先ではない。**Step 5 の完了報告時に、summary（および必要なら transcript/verbatim）を対象プロジェクトの正本ディレクトリへ移動することを必ず提案する。**
+
+- ファイル名はプロジェクトのファイル命名規約に従う（例：確定日付＋会議名を前方 prefix にした `YYYYMMDD_<会議名>_summary.md`）
+- 移動先プロジェクトが自明でなければ、Step 1 の情報収集時点でユーザーに確認する
+- 音声・チャンク・中間txt・`<stem>_usage.json` が入った `<stem>/` 素材フォルダは機密性・容量の観点からリポジトリに含めない運用が一般的。移動する場合もプロジェクトの `.gitignore` 方針に従う
+
 ## オプション
 
 `python3 <このSKILL.mdのディレクトリ>/scripts/audio-transcribe.py --help`。
