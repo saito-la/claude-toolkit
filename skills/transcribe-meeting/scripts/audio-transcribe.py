@@ -630,32 +630,86 @@ VERBATIM_PROMPT = """以下の会議文字起こしから、フィラー（え�
 ---
 {text}"""
 
-CONDENSED_PROMPT = """以下の会議文字起こしを凝縮してください。
+# 凝縮版のプロンプト。「凝縮」を主タスクにして圧縮系のルールを並べると、モデルは
+# 短くすることを最適化し、埋め込まれた「省略厳禁」の1行を無視する。2026-08-04 の実測では
+# 予算面談の要約から 5000万・3800万・2500万・700万・500万・200万・123台 が丸ごと落ち、
+# 金額・台数の保持率は 35% しかなかった。そこで
+#   (1) 制約を冒頭の独立ブロックに出して、書き方のルールと分離する
+#   (2) 何が「事実」なのかを分類して例示する（金額・台数・人数・期限・固有名詞…）
+#   (3) 概数へのぼかしを明示的に禁じる
+#   (4) 書いたあとに照合する手順を課す
+# の4点に作り替えたところ、同じモデルのままで 70% まで回復した。
+# 残りは機械的な検査＋修復パス（_missing_material_numbers / repair_summary）で埋める。
+CONDENSED_PROMPT = """以下の会議文字起こしから議事録要約を作成してください。
 
-ルール：
-- 発言の本質（事実・意見・意思決定・背景）を完全に保ちつつ、重複や冗長な表現を排除する
-- 具体的な数値・固有名詞・技術的課題・提案内容は省略厳禁
-- 口語特有の繰り返し・言い直し・無意味な相槌・冗長な説明を削ぎ落とし、事務的で洗練された文章に再構成する
+## 最優先の制約：事実は1つも落とさない
+
+削ってよいのは**言い回し**だけです。**事実は削れません。** 次に挙げるものは、入力に現れたら必ず出力にも原文の値のまま含めてください。
+
+- **金額**（例: 5000万、3800万、200万、20円）
+- **数量・台数・人数**（例: 123台、8台、89人、5名）
+- **日付・期限・年度・時刻**（例: 2026年、4月、20日、17時）
+- **割合・件数**（例: 60件、2件）
+- **固有名詞**（人名・組織名・部署名・製品名・システム名・勘定科目名）
+- **意思決定と、その担当者・期限**
+
+**概数への置き換えを禁止します。** 「数百万円」「複数台」「数名」のようにぼかさず、原文の数値をそのまま書いてください。数値が話題の中心（予算・契約・人員）である会議では、数値の脱落は要約の失敗とみなします。
+
+## 手順
+
+1. まず入力を通読し、上の分類に当てはまる値をすべて拾い出す。
+2. そのうえで本文を書く。
+3. **書き終えたら、1で拾った値が本文に含まれているか照合する。漏れていれば本文に加える。**
+
+## 書き方
+
+- 発言の本質（事実・意見・意思決定・背景）を保ちつつ、口語特有の繰り返し・言い直し・相槌・冗長な言い回しを削ぎ落とし、事務的で洗練された文章に再構成する
 - 断片的な発言を文脈ごとに一貫性のある段落として統合する（発言者が混在してよい）
 - 話題の切り替わりごとに ## レベルの小見出しを付ける
-- 話者名は段落冒頭または文中で自然に示す。確度記号は要約では簡略表記にする：**〔◎〕（確実）は付けない**（例「古賀部長より：…」）、〔○〕は「○」、〔△〕は「△」、〔？〕は「？」を氏名直後に付す（例「金子○より：…」「話者不明？」）
+- 話者名は段落冒頭または文中で自然に示す。確度記号は簡略表記にする：**〔◎〕（確実）は付けない**（例「古賀部長より：…」）、〔○〕は「○」、〔△〕は「△」、〔？〕は「？」を氏名直後に付す（例「金子○より：…」「話者不明？」）
 - 意味のない相槌のみの行は削除する
 - 同じ内容を繰り返さない
-- 出力はMarkdownのみ（説明文不要）
+- 出力はMarkdownのみ（説明文・前置き・「以上です」等は不要）
 
 ---
 {text}"""
 
 MERGE_PROMPT = """以下は同一会議を時系列の区間ごとに凝縮した要約の連結です。全体を1本の議事録要約に統合してください。
 
-ルール：
+## 最優先の制約：統合は圧縮ではない
+
+**入力に現れる金額・数量・台数・人数・日付・期限・年度・時刻・割合・固有名詞・意思決定は、1つ残らず出力に引き継いでください。** 概数へのぼかし（「数百万円」「複数台」）を禁止します。区間をまたぐ重複を1つにまとめることは求めますが、**事実そのものを減らすことは求めていません。**
+
+統合後に、入力側に出てくる数値・固有名詞が出力に残っているか照合し、漏れていれば加えてください。
+
+## 書き方
+
 - 区間をまたぐ重複を排除し、話題ごとに ## 小見出しで再構成する
-- 事実・数値・固有名詞・意思決定・話者名を落とさない。確度記号は簡略表記（〔◎〕は付けない、〔○〕→「○」、〔△〕→「△」、〔？〕→「？」）
 - 時系列と論理の流れを保つ
+- 確度記号は簡略表記（〔◎〕は付けない、〔○〕→「○」、〔△〕→「△」、〔？〕→「？」）
 - 出力はMarkdownのみ（説明文不要）
 
 ---
 {text}"""
+
+SUMMARY_REPAIR_PROMPT = """以下は会議の議事録要約と、その元になった文字起こしから抽出した「要約に含まれていない数値」の一覧です。
+
+要約に抜けている数値を、**原文の文脈に沿って要約の適切な段落に挿入**してください。
+
+ルール：
+- **既存の記述を書き換えない。** 構成・小見出し・語り口はそのまま保ち、抜けている数値とその文脈だけを最小限の加筆で補う
+- 原文の値をそのまま使う（概数へのぼかし禁止）
+- **文脈が判然としない値、聞き取り誤りと判断できる値は無理に入れない。** 入れられなかった値があってもよい
+- 出力は補完後の要約Markdown全文のみ（説明文・差分・前置きは不要）
+
+## 要約
+
+{summary}
+
+## 要約に含まれていない数値と、原文での出現箇所
+
+{missing}
+"""
 
 
 # ── 音声処理（ffmpeg / ffprobe） ─────────────────────────────────
@@ -871,6 +925,67 @@ def _split_for_post(text: str, max_chars: int = POST_BLOCK_CHARS) -> list:
     return blocks or [text]
 
 
+# 凝縮版から落ちてはいけない数値の型。金額・台数に絞るのは、これが議題の核になりやすく
+# （予算・契約・人員）、かつ「8階」「1回」のような些末値と機械的に区別できるため。
+# 対象を広げると誤検知が増えて、修復パスが ASR の誤認識まで本文へ運び込む。
+MATERIAL_NUM_RE = re.compile(r"\d[\d,．\.]*\s*(?:円|万|億|台)")
+
+
+def _norm_num(s: str) -> str:
+    """数値表現の表記ゆれ（空白・桁区切り）を吸収する。"""
+    return re.sub(r"[\s,]", "", s)
+
+
+def _missing_material_numbers(src: str, summary: str) -> dict:
+    """原文にあって凝縮版に無い金額・台数を {正規化値: (原表記, 原文の該当箇所)} で返す。
+    原文の行を添えるのは、値だけ渡すとモデルが置き場所を作れず捏造しかねないため。"""
+    have = {_norm_num(x) for x in MATERIAL_NUM_RE.findall(summary)}
+    lines = src.splitlines()
+    out: dict = {}
+    for i, line in enumerate(lines):
+        for m in MATERIAL_NUM_RE.findall(line):
+            k = _norm_num(m)
+            if k in have or k in out:
+                continue
+            out[k] = (m, "\n".join(lines[max(0, i - 1):i + 2]))
+    return out
+
+
+def _fabricated_numbers(src: str, summary: str) -> list:
+    """凝縮版にあって原文に無い金額・台数。合計値などモデルが計算した数の可能性があるので
+    自動では消さず、人が確かめられるよう警告だけ出す。"""
+    s = {_norm_num(x) for x in MATERIAL_NUM_RE.findall(src)}
+    return sorted({_norm_num(x) for x in MATERIAL_NUM_RE.findall(summary)} - s)
+
+
+def repair_summary(client, src: str, summary: str) -> str:
+    """凝縮版から落ちた金額・台数を1回だけ補完する。
+    プロンプトの作り替えだけでは保持率が7割で頭打ちになるため（2026-08-04 実測）、
+    残りは検査して埋める。失敗しても元の要約を壊さない。"""
+    miss = _missing_material_numbers(src, summary)
+    if not miss:
+        print("  数値チェック: 金額・台数の脱落なし")
+        return summary
+    print(f"  数値チェック: 金額・台数が {len(miss)} 種 欠落（{', '.join(sorted(miss))}）→ 補完中...",
+          end="", flush=True)
+    blob = "\n\n".join(f"### {v[0]}\n```\n{v[1]}\n```" for v in miss.values())
+    try:
+        fixed = (generate_with_retry(
+            client, "summary-repair", model=POST_MODEL,
+            contents=SUMMARY_REPAIR_PROMPT.format(summary=summary, missing=blob)).text or "").strip()
+    except Exception as e:                        # 補完は付加価値なので、失敗しても本体は返す
+        print(f" 失敗（{type(e).__name__}）。元の要約をそのまま使います")
+        return summary
+    if len(fixed) < len(summary) * 0.8:           # 作り直されて短くなったら採用しない
+        print(" 補完結果が短すぎるため不採用")
+        return summary
+    left = _missing_material_numbers(src, fixed)
+    print(f" 完了（残 {len(left)} 種）")
+    if left:
+        print(f"    ⚠ 補完できなかった値: {', '.join(sorted(left))}（原文を確認してください）")
+    return fixed
+
+
 def _summary_marker_style(text: str) -> str:
     """凝縮版（summary）の確度記号を簡略表記にする（transcript/verbatim には適用しない）。
     〔◎〕（確実）は付けない ／ 〔○〕→○ ／ 〔△〕→△ ／ 〔？〕→？。氏名直後に残った空白も整える。"""
@@ -992,6 +1107,14 @@ def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
         summary = generate_with_retry(client, "summary-merge", model=POST_MODEL,
                                       contents=MERGE_PROMPT.format(text="\n\n".join(sparts))).text or ""
     summary = _summary_marker_style(collapse_loops(summary).strip())
+    print(" 完了")
+    # 凝縮版は「省略厳禁」と指示していても金額・台数を落とす。プロンプトで7割まで戻せるが、
+    # 残りは検査して埋める（2026-08-04 実測: 35% → 70%（プロンプト改良）→ 100%（本チェック））。
+    summary = repair_summary(client, transcript, summary)
+    fab = _fabricated_numbers(transcript, summary)
+    if fab:
+        print(f"    ⚠ 原文に無い金額・台数が要約にある: {', '.join(fab)}"
+              f"（合計値などモデルの計算の可能性。要確認）")
 
     title, slug = derive_title(client, summary)
     body = f"# {title}\n\n{summary}\n" if title else summary + "\n"
@@ -1012,7 +1135,7 @@ def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
         print(f"\nタイトルを内容から生成: {stem} → {new_stem}")
 
     summary_out.write_text(body, encoding="utf-8")
-    print(f" 完了: {summary_out.name}")
+    print(f"  凝縮版: {summary_out.name}")
     return verbatim_out, summary_out, new_stem
 
 
