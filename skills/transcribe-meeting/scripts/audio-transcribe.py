@@ -98,6 +98,21 @@ DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.js
 # 形式で「無料枠」と表示していた実装は、課金キーを無料枠と誤表示していた（2026-08-04 修正）。
 _API_KEY_DESC = "不明"
 
+# このキーが課金枠（Tier 1）か無料枠かの判定結果。'paid' / 'free' / 'unknown'。
+# これが分からないと、レポートの概算額が「実際に請求された額」なのか
+# 「無料枠で賄われて 0 円だった額」なのか区別できない（2026-08-04 まで区別していなかった）。
+_BILLING_TIER = "unknown"
+_TIER_LABEL = {
+    "paid": "課金（Tier 1）— この実行は実請求される",
+    "free": "無料枠 — 実請求なし。ただし RPD の上限がある",
+    "unknown": "不明（判定できず）",
+}
+# 無料枠を持たないモデル。これが通るかどうかでキーの課金状態が分かる
+# （無料枠プロジェクトでは quota limit: 0 で弾かれる）。
+TIER_PROBE_MODEL = "gemini-3.1-pro-preview"
+TIER_CACHE_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-key-tier.json"
+TIER_CACHE_DAYS = 30            # 課金状態はめったに変わらないので毎回問い合わせない
+
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
 # 各文字起こし区間の品質判定（一発合格／再試行／格上げ／要確認）を記録する
@@ -416,12 +431,14 @@ def write_usage_report(out_dir: Path, stem: str):
     quality = _quality_summary()
     report = {"total_tokens": total_tokens, "est_usd_approx": round(est_cost, 4),
               "est_jpy_approx": round(est_cost * 155),
+              "billing_tier": _BILLING_TIER,        # paid=実請求 / free=請求なし / unknown=判別不能
+              "billed": None if _BILLING_TIER == "unknown" else (_BILLING_TIER == "paid"),
               "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
               "no_free_tier_models": billable,
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
               "api_sec": round(api_sec, 1),
               "note": "est_usd は公式単価（音声入力単価・200k超の階層を反映）による概算。"
-                      "無料枠の消化分は差し引いていないため、無料枠内なら実請求は 0 になる。"
+                      "billed=true なら課金キーでこの額が実請求される。billed=false なら無料枠キーで請求は発生しない。"
                       "elapsed_sec は本コマンドの総経過時間、api_sec は Gemini 応答待ちの合計。",
               "quality": quality, "by_stage": rows,
               "quality_detail": QUALITY_LOG, "calls": USAGE_LOG}
@@ -435,10 +452,19 @@ def write_usage_report(out_dir: Path, stem: str):
               f"total={r['total']:>9,}  (in={r['prompt']:,}〔音声 {r['prompt_audio']:,}〕"
               f" / out={r['candidates'] + r['thoughts']:,})  "
               f"{r['sec']:>6.1f}秒  ~${r['est_usd']}")
-    print(f"  合計 {total_tokens:,} トークン ／ 概算 ${round(est_cost, 4)}（約 {round(est_cost * 155):,} 円）")
-    print("  ※ 公式単価による概算（音声入力単価・200k超の階層を反映）。無料枠で賄えた分は実請求されない。")
+    jpy = round(est_cost * 155)
+    if _BILLING_TIER == "paid":
+        print(f"  合計 {total_tokens:,} トークン ／ **実請求 約 {jpy:,} 円**（${round(est_cost, 4)}）")
+        print("  ※ 課金キーのため無料枠の割当はなく、この実行はそのまま請求される。公式単価による概算。")
+    elif _BILLING_TIER == "free":
+        print(f"  合計 {total_tokens:,} トークン ／ **実請求なし**（無料枠。課金なら {jpy:,} 円相当）")
+        print("  ※ 無料枠キーのため請求は発生しない。ただし RPD の上限がある。")
+        print("  ※ 無料枠は利用規約上、人間のレビュアーが入出力を読む。機密音声を送らないこと。")
+    else:
+        print(f"  合計 {total_tokens:,} トークン ／ 概算 ${round(est_cost, 4)}（約 {jpy:,} 円）")
+        print("  ※ 課金状態を判定できなかったため、実請求か無料枠内かは不明。")
     if billable:
-        print(f"  ⚠ 無料枠が無いモデルを使用: {', '.join(billable)}（1リクエスト目から課金）")
+        print(f"  ⚠ 無料枠が無いモデルを使用: {', '.join(billable)}（無料枠キーでも 429 になる）")
     print(f"\n── 所要時間 ──")
     print(f"  総経過 {_fmt_dur(elapsed)}（うち Gemini 応答待ち {_fmt_dur(api_sec)}）")
     write_quality_report()
@@ -1168,6 +1194,53 @@ def _key_fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
+def _classify_tier(e) -> str:
+    """課金状態プローブの例外を 'paid' / 'free' / 'unknown' に分類する。
+    無料枠プロジェクトは、無料枠を持たないモデルに対して free_tier のクォータを limit: 0 で返す。
+    クレジット枯渇は「課金キーだが残高切れ」なので paid 側に分類する（無料枠ではない）。"""
+    if getattr(e, "code", None) != 429:
+        return "unknown"
+    msg = str(getattr(e, "message", "") or e)
+    if _quota_kind(e) == "credits":
+        return "paid"
+    if "free_tier" in msg and "limit: 0" in msg:
+        return "free"
+    return "unknown"
+
+
+def detect_billing_tier(client, fingerprint: str) -> str:
+    """キーが課金枠か無料枠かを実測する。指紋ごとに結果をキャッシュし、通常は問い合わせない。
+    判定コストは初回の1リクエストのみ（課金キーでも数十トークン、無料枠キーは 429 で無料）。"""
+    today = _dt.date.today().isoformat()
+    cache = {}
+    try:
+        if TIER_CACHE_PATH.exists():
+            cache = json.loads(TIER_CACHE_PATH.read_text(encoding="utf-8"))
+        hit = cache.get(fingerprint)
+        if hit:
+            age = (_dt.date.fromisoformat(today) - _dt.date.fromisoformat(hit["checked"])).days
+            if age < TIER_CACHE_DAYS and hit.get("tier") in _TIER_LABEL:
+                return hit["tier"]
+    except (OSError, ValueError, KeyError):
+        cache = {}
+    try:
+        client.models.generate_content(model=TIER_PROBE_MODEL, contents="ping")
+        tier = "paid"
+    except (errors.ClientError, errors.ServerError) as e:
+        tier = _classify_tier(e)
+    except Exception:                        # ネットワーク断等。判定不能をキャッシュしない
+        return "unknown"
+    if tier != "unknown":                    # 判定できたときだけ残す
+        try:
+            TIER_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            cache[fingerprint] = {"tier": tier, "checked": today}
+            TIER_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2),
+                                       encoding="utf-8")
+        except OSError:
+            pass
+    return tier
+
+
 def _run_gui() -> tuple:
     import tkinter as tk
     from tkinter import filedialog
@@ -1232,8 +1305,14 @@ def main():
     esc = f"品質不良時は {ESCALATE_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
     print(f"── Gemini API ──\n  モデル: {a.model}（文字起こし）／ {POST_MODEL}（後処理）／ {esc}")
     print(f"  キー: {_API_KEY_DESC}")
-    print("  ※ キー形式では無料枠／課金は判別できない（紐づく Cloud プロジェクトの課金状態で決まる）")
     client = genai.Client(api_key=a.api_key)
+    # 課金状態を実測する。キー形式（AQ. / AIza）では判別できず、紐づく Cloud プロジェクトの
+    # 課金状態で決まるため、無料枠を持たないモデルへの ping で確かめる（結果は指紋ごとにキャッシュ）。
+    global _BILLING_TIER
+    _BILLING_TIER = detect_billing_tier(client, _key_fingerprint(a.api_key))
+    print(f"  課金状態: {_TIER_LABEL[_BILLING_TIER]}")
+    if _BILLING_TIER == "unknown":
+        print("    （末尾のコスト表示は概算にとどまり、実請求かどうかは判別できません）")
 
     # ── derive-only モード ──────────────────────────────────
     if a.derive_only:

@@ -28,6 +28,12 @@ from google.genai import errors
 
 CONFIG_FILE = Path.home() / ".config" / "claude-toolkit" / "gemini-api-key"
 PING_MODEL = "gemini-3.5-flash"     # 最安・最小の呼び出しで状態だけ見る
+# 無料枠を持たないモデル。通れば課金枠（Tier 1）、free_tier の limit: 0 で弾かれれば無料枠。
+# キー形式（AQ. / AIza）では判別できず、紐づく Cloud プロジェクトの課金状態で決まるため実測する。
+TIER_PROBE_MODEL = "gemini-3.1-pro-preview"
+TIER_LABEL = {"paid": "課金（Tier 1）＝使うと実請求される",
+              "free": "無料枠＝実請求なし。RPD 上限あり。機密音声は送らない",
+              "unknown": "判定できず"}
 
 
 def fingerprint(key: str) -> str:
@@ -81,6 +87,27 @@ def check(key: str, model: str) -> tuple:
         return "ERROR", str(e)[:120]
 
 
+def check_tier(key: str) -> str:
+    """課金枠か無料枠かを実測する。'paid' / 'free' / 'unknown'。
+    どちらかで 429 の意味も対処も変わる（無料枠＝待てば回復／課金＝クレジット購入）ので、
+    キーの状態を見るときは併せて出す。クレジット枯渇は「課金キーの残高切れ」なので paid。"""
+    # Client は変数に束縛してから呼ぶこと。式の中で作って即呼ぶと、リクエスト中に
+    # ガベージコレクトされて "Cannot send a request, as the client has been closed" になる。
+    client = genai.Client(api_key=key)
+    try:
+        client.models.generate_content(model=TIER_PROBE_MODEL, contents="ping")
+        return "paid"
+    except (errors.ClientError, errors.ServerError) as e:
+        if getattr(e, "code", None) != 429:
+            return "unknown"
+        msg = str(getattr(e, "message", "") or e)
+        if "prepayment" in msg.lower() or "credits are depleted" in msg.lower():
+            return "paid"
+        return "free" if ("free_tier" in msg and "limit: 0" in msg) else "unknown"
+    except Exception:
+        return "unknown"
+
+
 def main():
     p = argparse.ArgumentParser(description="Gemini API キーの利用可否を実測して表示する")
     p.add_argument("--model", default=PING_MODEL, help=f"ping に使うモデル（既定: {PING_MODEL}）")
@@ -105,7 +132,8 @@ def main():
     for fp, entry in by_fp.items():
         status, detail = check(entry["key"], a.model)
         results.append({"fingerprint": fp, "origins": entry["origins"],
-                        "status": status, "detail": detail})
+                        "status": status, "detail": detail,
+                        "tier": check_tier(entry["key"])})
 
     effective = next((r for r in results
                       if any("実効" in o for o in r["origins"])), None)
@@ -118,7 +146,7 @@ def main():
         print(f"── Gemini API キーの状態（ping モデル: {a.model}）──")
         for r in results:
             mark = "✓" if r["status"] == "OK" else "✗"
-            print(f"  {mark} 指紋 {r['fingerprint']}  {r['status']}")
+            print(f"  {mark} 指紋 {r['fingerprint']}  {r['status']}  ［{TIER_LABEL[r['tier']]}］")
             print(f"      {r['detail']}")
             for o in r["origins"]:
                 print(f"      由来: {o}")
