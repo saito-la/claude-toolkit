@@ -7,7 +7,7 @@
 
   gemini-cost-report.py                  # 累積・工程別・案件別・日別・マシン別
   gemini-cost-report.py --days 7         # 直近7日ぶんに絞る
-  gemini-cost-report.py --job kobayashi  # 案件名の部分一致で絞る
+  gemini-cost-report.py --job budget-meeting  # 案件名の部分一致で絞る
   gemini-cost-report.py --calls          # 案件を1件ずつ工程内訳つきで出す
   gemini-cost-report.py --json           # 集計結果を JSON で出す（他ツールへの受け渡し用）
 
@@ -63,6 +63,24 @@ def bar(value: float, total: float, width: int = 24) -> str:
     return "█" * n + "·" * (width - n)
 
 
+JOB_MAP_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-cost" / "job-names.local.json"
+
+
+def _job_label(row: dict) -> str:
+    """job_id を実名に解決する。対応表はこの端末にしか無いので、無ければ id をそのまま返す。
+
+    コストログには案件名を書かない（会議名・人名が git 同期される履歴に残るのを避ける）。
+    実名が要るのは閲覧時だけなので、解決はここで行う。"""
+    jid = row.get("job_id")
+    if not jid:
+        return str(row.get("job") or "?")     # job_id 導入前の行
+    try:
+        m = json.loads(JOB_MAP_PATH.read_text(encoding="utf-8"))
+        return (m.get(jid) or {}).get("job") or jid
+    except (OSError, ValueError):
+        return jid
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Gemini 文字起こしの課金を累積ログから集計する")
     p.add_argument("--days", type=int, help="直近 N 日ぶんに絞る")
@@ -77,7 +95,7 @@ def main() -> None:
         since = (_dt.date.today() - _dt.timedelta(days=a.days)).isoformat()
         rows = [r for r in rows if (r.get("ts") or "")[:10] >= since]
     if a.job:
-        rows = [r for r in rows if a.job.lower() in (r.get("job") or "").lower()]
+        rows = [r for r in rows if a.job.lower() in _job_label(r).lower()]
     if not rows:
         sys.exit("条件に合う記録がない。")
 
@@ -160,7 +178,7 @@ def main() -> None:
             flag += " thinking未計上"
         am = f"{float(r['audio_min']):.0f}分" if r.get("audio_min") else "—"
         print(f"  {bar(jpy(r), total_jpy)} {jpy(r):>7,}円  {(r.get('ts') or '')[:10]}  "
-              f"{(r.get('job') or '?')[:32]:<32} {am:>6}  req={r.get('requests') or 0:>3}"
+              f"{_job_label(r)[:32]:<32} {am:>6}  req={r.get('requests') or 0:>3}"
               f"  思考{r.get('thinking_pct') or 0:>3}%{flag}")
 
     if len(host_agg) > 1:

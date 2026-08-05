@@ -113,6 +113,11 @@ DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.js
 COST_LOG_DIR = Path.home() / ".config" / "claude-toolkit" / "gemini-cost"
 COST_LOG_PATH = COST_LOG_DIR / f"{os.uname().nodename.split('.')[0]}.jsonl"
 
+# 案件名（会議名・人名）はコストログに書かず、この端末ローカルの地図にだけ置く。
+# `.local.json` は gitignore 対象にする運用（機密区分上コミットできない会議名が
+# 混ざるのを構造的に防ぐ。詳細は _job_id のドキュメント）。
+JOB_MAP_PATH = COST_LOG_DIR / "job-names.local.json"
+
 # 使用APIキーの説明（由来＋指紋）。main() で解決して表示用に保持する。
 # キー形式（AQ. / AIza）で無料枠・課金を判定してはいけない：課金が効くかどうかは
 # キー形式ではなく、キーが紐づく Cloud プロジェクトの課金状態で決まる（形式は無関係）。
@@ -441,11 +446,33 @@ def _thinking_cost(u: dict) -> float:
     return u.get("thoughts", 0) / 1e6 * pr["out"]
 
 
+def _job_id(stem: str, out_dir: Path) -> str:
+    """案件名を安定した8桁の識別子に変換し、実名との対応を端末ローカルの地図に記録する。
+
+    コストログは git 管理下に置いて複数マシンで共有するため、**案件名（stem）をそのまま
+    書かない**。案件名は音声ファイル名に由来し、会議名や人名になる。そのまま履歴に残すと、
+    健康情報・人事情報に触れる会議のようにコミットできないものが混ざり、後から気づいても
+    履歴の書き換えが必要になる（実際に起きた）。対応表 JOB_MAP_PATH は `.local.json` で
+    gitignore 対象にし、実名は各マシンの中だけで解決する。"""
+    jid = hashlib.sha256(stem.encode("utf-8")).hexdigest()[:8]
+    try:
+        JOB_MAP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        m = {}
+        if JOB_MAP_PATH.exists():
+            m = json.loads(JOB_MAP_PATH.read_text(encoding="utf-8"))
+        m[jid] = {"job": stem, "out_dir": str(out_dir)}
+        JOB_MAP_PATH.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
+    except (OSError, ValueError):
+        pass                                  # 地図が書けなくてもコストログは残す
+    return jid
+
+
 def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
     """実行1回ぶんのコスト明細を COST_LOG_PATH に1行追記する（追記専用・履歴を消さない）。
 
-    案件名・stage 別・thinking の内訳・格上げ回数まで残すのは、「どの案件のどの工程に
-    いくら使ったか」を成果物の移動・削除に関係なく後から辿れるようにするため。"""
+    stage 別・thinking の内訳・格上げ回数まで残すのは、「どの案件のどの工程に
+    いくら使ったか」を成果物の移動・削除に関係なく後から辿れるようにするため。
+    案件名は `job_id`（`_job_id` 参照）に置き換えて書く。"""
     try:
         q = report.get("quality") or {}
         calls = report.get("calls") or []
@@ -458,8 +485,7 @@ def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
             "ts": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "pt_date": _pt_date(),            # 無料枠 RPD のリセット基準に揃える
             "machine": os.uname().nodename,   # 集計はマシン別。合算は閲覧側で行う
-            "job": stem,
-            "out_dir": str(out_dir),
+            "job_id": _job_id(stem, out_dir),  # 実名は JOB_MAP_PATH（gitignore）側にだけ置く
             "billing_tier": report.get("billing_tier"),
             "billed": report.get("billed"),
             "api_key": report.get("api_key"),
