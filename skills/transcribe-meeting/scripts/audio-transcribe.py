@@ -10,9 +10,15 @@
   audio-transcribe.py <音声ファイル> --split      # 最初から分割モード
   audio-transcribe.py <_parts/ ディレクトリ>      # 分割済みチャンクをそのまま処理
   audio-transcribe.py <音声> --context ctx.txt    # 固有名詞・発言者候補を文脈として注入
-  audio-transcribe.py <音声> --no-derive          # 文字起こしのみ（verbatim/summary を作らない）
-  audio-transcribe.py --derive-only <transcript>  # 既存トランスクリプトから verbatim/summary を再生成
+  audio-transcribe.py --check-numbers <transcript> <summary>  # 要約の数値欠落を検査（API不要・無課金）
+  audio-transcribe.py <音声> --derive             # 後処理も Gemini でやる（非推奨。既定は文字起こしのみ）
+  audio-transcribe.py --derive-only <transcript>  # 既存トランスクリプトから後処理だけ Gemini で（非推奨）
   audio-transcribe.py <音声> --model gemini-2.5-pro  # 精度優先でproを使う
+
+既定は**文字起こしのみ**。ケバ取り（verbatim）・凝縮（summary）は Gemini に投げず Claude 側で
+行う（齋藤方針 2026-08-05）。音声を文字にする工程だけが Gemini を必要とし、そこは無料枠で
+足りる。整形は契約済みの Claude で追加課金なくできるうえ、実測では後処理が Gemini 課金の
+大半を占めていた（記録18件・1,464円のうち後処理 585円）。手順は SKILL.md Step 4。
 """
 
 import argparse, datetime as _dt, hashlib, json, os, re, shutil, subprocess, sys, time
@@ -91,6 +97,21 @@ FREE_TIER_RPD = {
 # 2026-07-29 に片方の Mac の集計だけを見て「課金はほぼ未消費」と判定し、不要課金と誤結論した。
 # 合算する仕組みは無いので、この集計だけで課金・枯渇を判定してはいけない（表示にも明記する）。
 DAILY_TALLY_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-usage.json"
+
+# 実行1回ぶんのコスト明細を1行の JSON として追記していく累積ログ（JSON Lines）。
+# 上の gemini-usage.json は「PT日付 × モデル」のリクエスト数・トークン数しか持たず、
+# 案件名・stage 別・thinking の内訳・格上げの有無を残さない。そのため
+# 「どの案件のどの工程に何円使ったか」を後から辿れず、2026-07〜08 の課金枯渇の原因究明で
+# 散在する <stem>_usage.json を find で拾い集める必要が生じた（成果物を移動・削除すると失われる）。
+# 追記専用（1実行=1行）にして履歴を消さない。閲覧は gemini-cost-report.py。
+#
+# **マシンごとに別ファイルへ書く。** 同一ファイルへ複数マシンから追記すると、git で同期した
+# ときに必ず末尾行が衝突する。ファイルを分ければ衝突せず、閲覧側でディレクトリを読んで合算できる。
+# ディレクトリ自体を同期対象（git リポジトリ等）への symlink にすれば全マシンの消費が1コマンドで
+# 見える。本スクリプトは同期の方法を知らない——公開リポジトリの配布物が個人環境のパスを
+# 前提にしないため（配線は各自の環境側で行う）。
+COST_LOG_DIR = Path.home() / ".config" / "claude-toolkit" / "gemini-cost"
+COST_LOG_PATH = COST_LOG_DIR / f"{os.uname().nodename.split('.')[0]}.jsonl"
 
 # 使用APIキーの説明（由来＋指紋）。main() で解決して表示用に保持する。
 # キー形式（AQ. / AIza）で無料枠・課金を判定してはいけない：課金が効くかどうかは
@@ -404,6 +425,75 @@ def _call_cost(u: dict) -> float:
             + out_tokens / 1e6 * pr["out"])
 
 
+def _thinking_cost(u: dict) -> float:
+    """1リクエストのうち thinking（思考）トークンぶんの課金額（USD）。
+
+    thinking は `candidates_token_count` に含まれないが**出力単価でそのまま課金される**。
+    2026-08-04 の commit 4e77f4c まで記録すらしておらず、7月中の消費が丸ごと不可視だった。
+    実測では格上げ先 gemini-3.5-flash で出力の10〜25倍の thinking が発生し、
+    1件の会議（91分）で総額 690 円のうち 519 円（73%）を占めた。lite 系は thinking を出さない。
+    総額に混ぜると同じ誤りを繰り返すので、単独の項目として常に可視化する。"""
+    pr = PRICING.get(u["model"])
+    if not pr:
+        return 0.0
+    if u["prompt"] > 200_000 and pr.get("over_200k"):
+        pr = {**pr, **pr["over_200k"]}
+    return u.get("thoughts", 0) / 1e6 * pr["out"]
+
+
+def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
+    """実行1回ぶんのコスト明細を COST_LOG_PATH に1行追記する（追記専用・履歴を消さない）。
+
+    案件名・stage 別・thinking の内訳・格上げ回数まで残すのは、「どの案件のどの工程に
+    いくら使ったか」を成果物の移動・削除に関係なく後から辿れるようにするため。"""
+    try:
+        q = report.get("quality") or {}
+        calls = report.get("calls") or []
+        stages = [{"stage": r["stage"], "model": r["model"], "calls": r["calls"],
+                   "tokens": r["total"], "thoughts": r.get("thoughts", 0),
+                   "usd": r["est_usd"]} for r in report.get("by_stage", [])]
+        th_usd = sum(_thinking_cost(u) for u in calls)
+        usd = report.get("est_usd_approx", 0.0)
+        row = {
+            "ts": _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "pt_date": _pt_date(),            # 無料枠 RPD のリセット基準に揃える
+            "machine": os.uname().nodename,   # 集計はマシン別。合算は閲覧側で行う
+            "job": stem,
+            "out_dir": str(out_dir),
+            "billing_tier": report.get("billing_tier"),
+            "billed": report.get("billed"),
+            "api_key": report.get("api_key"),
+            "usd": round(usd, 4),
+            "jpy": report.get("est_jpy_approx"),
+            "thinking_usd": round(th_usd, 4),
+            "thinking_jpy": round(th_usd * 155),
+            "thinking_pct": round(th_usd / usd * 100) if usd else 0,
+            "tokens": {
+                "total": report.get("total_tokens", 0),
+                "prompt": sum(u.get("prompt", 0) for u in calls),
+                "prompt_audio": sum(u.get("prompt_audio", 0) for u in calls),
+                "candidates": sum(u.get("candidates", 0) for u in calls),
+                "thoughts": sum(u.get("thoughts", 0) for u in calls),
+            },
+            "requests": len(calls),
+            "audio_min": q.get("covered_min"),
+            "grade": q.get("grade"),
+            "segments": q.get("segments"),
+            "escalated": sum(1 for d in report.get("quality_detail", []) if d.get("escalated")),
+            "retried": sum(1 for d in report.get("quality_detail", []) if (d.get("attempts") or 1) > 1),
+            "flagged": q.get("flagged"),
+            "elapsed_sec": report.get("elapsed_sec"),
+            "api_sec": report.get("api_sec"),
+            "thoughts_recorded": True,        # False の行は 2026-08-04 以前で thinking が未計上＝下限値
+            "stages": stages,                 # 工程別の内訳（どのパートに使ったか）
+        }
+        COST_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with COST_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except (OSError, ValueError, KeyError):
+        pass                                  # ログ追記の失敗で本処理を落とさない
+
+
 def write_usage_report(out_dir: Path, stem: str):
     """stage 別・モデル別のトークン消費・所要時間・品質を表示し、_usage.json に保存する。"""
     if not USAGE_LOG and not QUALITY_LOG:
@@ -448,9 +538,10 @@ def write_usage_report(out_dir: Path, stem: str):
     print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー: {_API_KEY_DESC}")
     print("\n── トークン消費（Gemini API） ──")
     for r in rows:
+        # thinking は出力単価で課金されるので out と足さずに別項目で見せる（混ぜると主因が隠れる）
         print(f"  {r['stage']:<14}{r['model']:<22}calls={r['calls']:>2}  "
               f"total={r['total']:>9,}  (in={r['prompt']:,}〔音声 {r['prompt_audio']:,}〕"
-              f" / out={r['candidates'] + r['thoughts']:,})  "
+              f" / out={r['candidates']:,} / 思考={r['thoughts']:,})  "
               f"{r['sec']:>6.1f}秒  ~${r['est_usd']}")
     jpy = round(est_cost * 155)
     if _BILLING_TIER == "paid":
@@ -465,9 +556,21 @@ def write_usage_report(out_dir: Path, stem: str):
         print("  ※ 課金状態を判定できなかったため、実請求か無料枠内かは不明。")
     if billable:
         print(f"  ⚠ 無料枠が無いモデルを使用: {', '.join(billable)}（無料枠キーでも 429 になる）")
+    # thinking の寄与を独立して出す。ここが総額の過半になる実行があり、混ぜると原因が見えない
+    th_usd = sum(_thinking_cost(u) for u in USAGE_LOG)
+    th_tok = sum(u.get("thoughts", 0) for u in USAGE_LOG)
+    if th_tok:
+        pct = round(th_usd / est_cost * 100) if est_cost else 0
+        print(f"  うち thinking（思考トークン）: {th_tok:,} トークン ／ 約 {round(th_usd * 155):,} 円（総額の {pct}%）")
+        if pct >= 40:
+            print("  ⚠ thinking が総額の4割超。lite 系は thinking を出さないため、"
+                  "格上げ（--no-escalate で抑止）と後処理モデルの見直しが効く。")
     print(f"\n── 所要時間 ──")
     print(f"  総経過 {_fmt_dur(elapsed)}（うち Gemini 応答待ち {_fmt_dur(api_sec)}）")
     write_quality_report()
+    _append_cost_log(report, stem, out_dir)
+    print(f"\n── 累積コストログ ──\n  {COST_LOG_PATH} に追記した"
+          f"（閲覧: {Path(__file__).parent / 'gemini-cost-report.py'}）")
     write_daily_tally_report()
     print(f"\n  レポート保存: {path.name}")
     return path
@@ -1276,15 +1379,67 @@ def main():
     p.add_argument("--rpd", type=int, metavar="N",
                    help="無料枠の1日リクエスト数（RPD）目安を上書き（本日消費表示用。既定 flash=250）")
     p.add_argument("--context", help="固有名詞・発言者候補を書いたテキストファイル（プロンプトに注入）")
-    p.add_argument("--no-derive", action="store_true", help="verbatim/summary を生成しない（文字起こしのみ）")
+    # 既定は文字起こしのみ。ケバ取り・凝縮は Gemini に投げず Claude 側で行う（齋藤方針 2026-08-05）。
+    # 実測で後処理が Gemini 課金の大半を占めた（記録18件・1,464円のうち後処理 585円。
+    # ケバ取りは入力とほぼ同量を出力し、そこに thinking が上乗せされる）。文字起こしは
+    # 音声を扱うため Gemini が必要だが、整形は契約済みの Claude で追加課金なくできる。
+    p.add_argument("--derive", action="store_true",
+                   help="verbatim/summary も Gemini で生成する（非推奨。既定は文字起こしのみで、"
+                        "後処理は Claude 側で行う。Claude を使えない環境向けのフォールバック）")
+    p.add_argument("--no-derive", action="store_true",
+                   help="（既定の挙動。後方互換のために残置。指定しても何も変わらない）")
     p.add_argument("--derive-only", metavar="TRANSCRIPT",
-                   help="既存トランスクリプトから verbatim/summary だけ再生成する")
+                   help="既存トランスクリプトから verbatim/summary を Gemini で再生成する（非推奨）")
+    p.add_argument("--check-numbers", nargs=2, metavar=("TRANSCRIPT", "SUMMARY"),
+                   help="要約から落ちた金額・台数と、原文に無い数値を検査するだけ（API 不要・無課金）。"
+                        "Claude が作った要約の検証に使う")
+    p.add_argument("--organize-only", metavar="TRANSCRIPT",
+                   help="成果物の整理だけを行う（summary.md 以外を <stem>/ へ一括。API 不要・無課金）。"
+                        "後処理を Claude 側で行ったあとに使う")
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
     p.add_argument("--no-escalate", action="store_true",
                    help=f"品質不良時に {ESCALATE_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
     p.add_argument("--no-organize", action="store_true",
                    help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
     a = p.parse_args()
+
+    # ── 数値チェックのみ（API を呼ばない＝無課金） ──────────────────────
+    # 要約から金額・台数が落ちるのはプロンプトでは防ぎきれない（2026-08-04 実測で保持率 35%、
+    # プロンプト改良後も 70%）。機械的な照合なのでモデルに任せず、後処理を誰が書いても
+    # 同じ検査を通せるよう独立したモードにしてある。Claude が作った要約の検証に使う。
+    if a.check_numbers:
+        tpath, spath = (Path(x).expanduser() for x in a.check_numbers)
+        src = tpath.read_text(encoding="utf-8")
+        summary = spath.read_text(encoding="utf-8")
+        miss = _missing_material_numbers(src, summary)
+        fab = _fabricated_numbers(src, summary)
+        print(f"原文: {tpath}\n要約: {spath}\n")
+        if miss:
+            print(f"⚠ 要約に含まれていない金額・台数が {len(miss)} 種:\n")
+            for _, (raw, ctx) in sorted(miss.items()):
+                print(f"  ● {raw}")
+                print("\n".join("      " + ln for ln in ctx.splitlines()) + "\n")
+        else:
+            print("金額・台数の脱落なし")
+        if fab:
+            print(f"\n⚠ 原文に無い数値が要約にある（合計値などの可能性。原文を確認すること）: "
+                  f"{', '.join(fab)}")
+        sys.exit(1 if miss else 0)
+
+    # ── 整理のみ（API を呼ばない＝無課金） ────────────────────────────
+    # 後処理を Claude 側で行うと、従来 derive の直後に走っていた整理が実行されない。
+    # 音声・チャンク・中間txt の拾い上げは手作業だと漏れるので単独モードにしてある。
+    if a.organize_only:
+        tpath = Path(a.organize_only).expanduser().resolve()
+        if not tpath.exists():
+            sys.exit(f"見つからない: {tpath}")
+        stem = re.sub(r"_transcript$", "", tpath.stem)
+        audio = next((p for p in tpath.parent.iterdir()
+                      if p.is_file() and p.suffix.lower() in AUDIO_SUFFIXES
+                      and p.stem.startswith(stem)), None)
+        organize_outputs(tpath.parent, stem, audio=audio)
+        sys.exit(0)
+
     if a.rpd:                                # RPD 目安を上書き（対象モデル＋既定 flash）
         FREE_TIER_RPD[a.model] = a.rpd
         FREE_TIER_RPD["gemini-2.5-flash"] = a.rpd
@@ -1396,13 +1551,13 @@ def main():
     out.write_text(result, encoding="utf-8")
     print(f"\n文字起こし完了: {out}")
 
-    if not a.no_derive:
+    if a.derive:
         _, _, stem = derive_files(client, result, out.parent, stem)
 
     write_usage_report(out.parent, stem)
     # 整理（既定）：summary.md 以外（音声・チャンク・transcript/verbatim・usage）を <stem>/ に一括。
-    # --no-derive 時は summary が無い＝整理せず transcript を直下に残す（話者比定の作業用）。
-    organized = not a.no_derive and not a.no_organize
+    # 後処理をしていない場合は summary が無い＝整理せず transcript を直下に残す（話者比定の作業用）。
+    organized = a.derive and not a.no_organize
     if organized:
         organize_outputs(out.parent, stem, audio=target if target.is_file() else None)
     print("\n生成ファイル:")
@@ -1411,9 +1566,12 @@ def main():
         print(f"  （他は {out.parent / stem}/ に格納）")
     else:
         print(f"  {out.parent / (stem + '_transcript.txt')}")
-        if not a.no_derive:
+        if a.derive:
             print(f"  {out.parent / (stem + '_verbatim.txt')}")
             print(f"  {out.parent / (stem + '_summary.md')}")
+        else:
+            print("\n次は話者比定（SKILL.md Step 3）→ ケバ取り・凝縮を Claude 側で生成（Step 4）。"
+                  "\nGemini への後処理は既定で行わない（課金の大半を占めるため）。")
 
 
 if __name__ == "__main__":
