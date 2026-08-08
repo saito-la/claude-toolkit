@@ -30,6 +30,12 @@ from pathlib import Path
 from google import genai
 from google.genai import errors, types
 
+# 単価表は同じディレクトリの gemini_pricing.py が正本。通常の CLI 実行では sys.path[0] が
+# スクリプトのディレクトリになるので import できるが、importlib で読み込まれた場合
+# （テスト等）はそうならない。実体ディレクトリを明示的に足して両方で動くようにする。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gemini_pricing import PRICING as _PRICE_TABLE, rate as _rate
+
 
 # ── モデル・閾値 ────────────────────────────────────────────────
 TRANSCRIBE_MODEL = "gemini-3.5-flash-lite" # 文字起こし。**このスクリプトが使う唯一のモデル**
@@ -62,16 +68,11 @@ MAX_CHARS_PER_SEC = 20                  # チャンク文字数の上限目安�
 # テキスト単価を放置しており実勢の約 1/3 を表示していて、これが「ほとんど使っていない」という
 # コスト誤認の直接原因になった（2026-08-04 調査。docs/automation/20260804-gemini-transcription-cost-investigation.md）。
 #
-# over_200k は、プロンプトが 200k トークンを超えたときに適用される単価。既定チャンク 15 分は
-# 約 22 万トークンなので、15分より長いチャンクを指定したときだけこの帯に入る。
-# free_tier は無料枠の有無。False のモデルは 1 リクエスト目から課金される。
-#
-# **本スクリプトが呼べるモデルだけを載せる。** 使わないモデルの単価をここに置くと、
-# 改定時に検証もされないまま古い値が残る。過去の実行を現行単価で計算し直すための
-# 全モデルの表は backfill-cost-log.py が持つ（あちらは廃止済みモデルの履歴を扱うため）。
-PRICING = {
-    "gemini-3.5-flash-lite":   {"in": 0.30, "in_audio": 0.30, "out": 2.50,  "free_tier": True},
-}
+# 単価の正本は gemini_pricing.py（全モデルの表。過去の実行を引き直す backfill-cost-log.py も
+# 同じ表を読む）。ここでは**本スクリプトが呼べるモデルの行だけ**を取り出して使う。
+# 全モデルの表をそのまま実行経路へ持ち込まないのは、使わないモデルの単価が検証されないまま
+# 計算に紛れ込むのを防ぐため。--model の choices もこの PRICING から作る。
+PRICING = {m: _PRICE_TABLE[m] for m in (TRANSCRIBE_MODEL,)}
 
 # 無料枠の1日リクエスト数（RPD）の目安。Google が随時改定するため正本ではない。
 # 公式ドキュメントは 2026-08 時点で per-model の数値を掲載しておらず、
@@ -427,11 +428,9 @@ def _call_cost(u: dict) -> float:
     """1リクエストの概算課金額（USD）。音声／テキストを別単価で、200k 超は上位帯の単価で計算する。
     階層はリクエスト単位で決まるため、モデル別に合算してから掛けると誤る（合算すると全リクエストが
     200k 超に見える）。ここで1件ずつ計算し、呼び出し側で足し上げる。"""
-    pr = PRICING.get(u["model"])
+    pr = _rate(u["model"], u["prompt"], PRICING)
     if not pr:
         return 0.0
-    if u["prompt"] > 200_000 and pr.get("over_200k"):
-        pr = {**pr, **pr["over_200k"]}
     out_tokens = u.get("candidates", 0) + u.get("thoughts", 0)
     return (u.get("prompt_audio", 0) / 1e6 * pr["in_audio"]
             + u.get("prompt_text", u["prompt"]) / 1e6 * pr["in"]
@@ -447,11 +446,9 @@ def _thinking_cost(u: dict) -> float:
     1件の会議（91分）で総額 690 円のうち 519 円（73%）を占めた。lite 系は thinking を出さない。
     現在の唯一のモデルは lite なので 0 になるはずだが、項目自体は残す——値が 0 でないことが
     「想定外のモデルで走った」という異常の検知になるため（総額に混ぜると同じ誤りを繰り返す）。"""
-    pr = PRICING.get(u["model"])
+    pr = _rate(u["model"], u["prompt"], PRICING)
     if not pr:
         return 0.0
-    if u["prompt"] > 200_000 and pr.get("over_200k"):
-        pr = {**pr, **pr["over_200k"]}
     return u.get("thoughts", 0) / 1e6 * pr["out"]
 
 

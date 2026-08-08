@@ -14,44 +14,23 @@
 - **2026-08-04 より前の実行は thinking トークンが記録されていない**（記録の追加は commit
   4e77f4c）。実際には課金されていたので、それらの行は `thoughts_recorded: false` を立て、
   金額は下限値として扱う。レポート側も警告を出す。
-- 古い `_usage.json` の `est_usd` は当時の誤った単価で書かれている。**現行の PRICING で
+- 古い `_usage.json` の `est_usd` は当時の誤った単価で書かれている。**現行の単価表（gemini_pricing.py）で
   引き直して**取り込む（当時の表示額は `est_usd_at_run` に残す）。
 """
 
 import argparse, datetime as _dt, json, os, subprocess, sys
 from pathlib import Path
 
+# 単価表は同じディレクトリの gemini_pricing.py が正本（audio-transcribe.py も同じものを読む）。
+# 本スクリプトは廃止済みモデルを含む過去の実行を引き直すため、**絞り込まない全モデルの表**を使う。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gemini_pricing import JPY_PER_USD, rate
+
 # 取り込み先はマシン別ファイル（audio-transcribe.py と同じレイアウト）。
 # 過去分は「どのマシンで走ったか」が _usage.json に残っていないため、
 # 取り込んだマシンのファイルではなく専用の backfill.jsonl に入れて由来を混ぜない。
 COST_LOG_DIR = Path.home() / ".config" / "claude-toolkit" / "gemini-cost"
 COST_LOG_PATH = COST_LOG_DIR / "backfill.jsonl"
-JPY_PER_USD = 155
-
-# audio-transcribe.py の PRICING と同じ値。import せず複製しているのは、本スクリプトが
-# 単体で動く後追い用ツールであり、本体の実行経路に影響を与えないため。
-# 単価を改定したときは両方直す（ズレたら本ファイルの値が古い可能性を疑う）。
-PRICING = {
-    "gemini-pro-latest":       {"in": 2.00, "in_audio": 2.00, "out": 12.00,
-                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
-    "gemini-3.1-pro-preview":  {"in": 2.00, "in_audio": 2.00, "out": 12.00,
-                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
-    "gemini-3.6-flash":        {"in": 1.50, "in_audio": 1.50, "out": 7.50},
-    "gemini-3.5-flash":        {"in": 1.50, "in_audio": 1.50, "out": 9.00},
-    "gemini-3.5-flash-lite":   {"in": 0.30, "in_audio": 0.30, "out": 2.50},
-    "gemini-3.1-flash-lite":   {"in": 0.25, "in_audio": 0.50, "out": 1.50},
-    "gemini-2.5-flash":        {"in": 0.30, "in_audio": 1.00, "out": 2.50},
-    "gemini-2.5-flash-lite":   {"in": 0.10, "in_audio": 0.30, "out": 0.40},
-}
-
-
-def rate(model: str, prompt: int) -> dict:
-    pr = PRICING.get(model)
-    if not pr:
-        return {}
-    if prompt > 200_000 and pr.get("over_200k"):
-        return {**pr, **pr["over_200k"]}
-    return pr
 
 
 def call_cost(c: dict) -> tuple:
