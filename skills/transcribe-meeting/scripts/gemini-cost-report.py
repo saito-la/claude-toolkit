@@ -101,9 +101,11 @@ def main() -> None:
 
     total_jpy = sum(jpy(r) for r in rows)
     th_jpy = sum(int(r.get("thinking_jpy") or 0) for r in rows)
-    # billed が True の行だけが実際に請求された分。無料枠キーの実行を混ぜると額を誤る
-    billed_jpy = sum(jpy(r) for r in rows if r.get("billed") is True)
-    free_jpy = sum(jpy(r) for r in rows if r.get("billed") is False)
+    # billed が True の行だけが実際に請求された分。無料枠キーの実行を混ぜると額を誤る。
+    # billed_jpy/free_jpy フィールドがあればそれを使う（KeyPool ローテーションで1回の実行内に
+    # 課金・無料枠が混在した行はこちらでないと按分できない）。無い旧行は行全体の jpy にフォールバック。
+    billed_jpy = sum(r.get("billed_jpy", jpy(r) if r.get("billed") is True else 0) for r in rows)
+    free_jpy = sum(r.get("free_jpy", jpy(r) if r.get("billed") is False else 0) for r in rows)
     unknown_jpy = total_jpy - billed_jpy - free_jpy
     partial = [r for r in rows if not r.get("thoughts_recorded", True)]
     audio_min = sum(float(r.get("audio_min") or 0) for r in rows)

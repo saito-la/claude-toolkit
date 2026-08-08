@@ -172,7 +172,7 @@ def _modality_tokens(details, want: str) -> int:
     return total
 
 
-def _record_usage(stage: str, model: str, resp, sec: float = 0.0) -> None:
+def _record_usage(stage: str, model: str, resp, sec: float = 0.0, tier: str = "unknown") -> None:
     um = getattr(resp, "usage_metadata", None)
     if not um:
         return
@@ -188,6 +188,10 @@ def _record_usage(stage: str, model: str, resp, sec: float = 0.0) -> None:
         "candidates": getattr(um, "candidates_token_count", 0) or 0,
         "thoughts": thoughts,
         "total": getattr(um, "total_token_count", 0) or 0,
+        # このリクエストを実際に処理したキーの課金状態。KeyPool でのローテーション後に
+        # 古いキーの状態のまま「実請求」と誤表示しないため、呼び出しごとに記録する
+        # （2026-08-08：ローテーション後も起動時の tier のまま全額を実請求と誤表示するバグを修正）。
+        "tier": tier,
     })
 
 
@@ -336,13 +340,17 @@ def _retry_delay_seconds(e):
 
 def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
     """generate_content を実行。分次レート(429)・サーバー過負荷(503/500)は限定的にリトライし、
-    日次上限(429 free tier / PerDay)は当日回復しないため即 QuotaExhaustedError で停止する
+    日次上限(429 free tier / PerDay)・クレジット枯渇は、client が KeyPool かつ他に未使用の
+    キーがあれば自動で切替えて同じリクエストを再試行する（試行回数は消費しない）。
+    キーを使い切っても回復しない場合は QuotaExhaustedError で停止する
     （＝失敗を長引かせず、無料枠を無駄に消費しない）。"""
-    for attempt in range(1, max_attempts + 1):
+    attempt = 1
+    while True:
         try:
             t0 = time.time()
             resp = client.models.generate_content(**kwargs)
-            _record_usage(stage, kwargs.get("model", ""), resp, time.time() - t0)
+            tier = client.current_tier() if isinstance(client, KeyPool) else _BILLING_TIER
+            _record_usage(stage, kwargs.get("model", ""), resp, time.time() - t0, tier=tier)
             um = getattr(resp, "usage_metadata", None)
             _bump_daily_tally(kwargs.get("model", ""),
                               getattr(um, "total_token_count", 0) if um else 0)
@@ -351,6 +359,8 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
             code = getattr(e, "code", None)
             if _is_tier_block(e):
                 raise                        # モデル未提供。呼び出し側で格下げ
+            if _quota_kind(e) in ("credits", "day") and isinstance(client, KeyPool) and client.rotate():
+                continue                     # 新しいキーで同じリクエストを再試行
             _raise_if_hard_quota(e)
             transient = code in (429, 500, 503)
             if not transient or attempt == max_attempts:
@@ -364,6 +374,7 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
             print(f"\n  一時的なエラー（{code}）。{wait}秒後にリトライ ({attempt}/{max_attempts})",
                   end="", flush=True)
             time.sleep(wait)
+            attempt += 1
 
 
 def _quality_summary() -> dict:
@@ -491,6 +502,11 @@ def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
             "api_key": report.get("api_key"),
             "usd": round(usd, 4),
             "jpy": report.get("est_jpy_approx"),
+            # 実請求ぶん／無料枠ぶんを分けて残す（KeyPool のローテーションで1回の実行内に
+            # 課金キーと無料枠キーが混在し得るため、行全体を billed 一択で丸めると
+            # 集計側〔gemini-cost-report.py〕が混在ぶんを誤って実請求扱いする）。
+            "billed_jpy": report.get("billed_jpy_approx"),
+            "free_jpy": report.get("free_jpy_approx"),
             "thinking_usd": round(th_usd, 4),
             "thinking_jpy": round(th_usd * 155),
             "thinking_pct": round(th_usd / usd * 100) if usd else 0,
@@ -545,10 +561,26 @@ def write_usage_report(out_dir: Path, stem: str):
     billable = [m for m in sorted({r["model"] for r in rows})
                 if not PRICING.get(m, {}).get("free_tier", True)]
     quality = _quality_summary()
+    # tier はリクエストごとに記録済み（KeyPool でローテーションすると1回の実行内で
+    # 課金キー・無料枠キーが混在し得るため、起動時の _BILLING_TIER 1個では判定できない）。
+    has_paid = any(u.get("tier") == "paid" for u in USAGE_LOG)
+    has_free = any(u.get("tier") == "free" for u in USAGE_LOG)
+    has_unknown = any(u.get("tier") not in ("paid", "free") for u in USAGE_LOG)
+    tier_summary = "mixed" if (has_paid and has_free) else (
+        "paid" if has_paid else ("free" if has_free else "unknown"))
+    billed = True if has_paid else (None if has_unknown else False)
+    paid_usd = sum(_call_cost(u) for u in USAGE_LOG if u.get("tier") == "paid")
+    free_usd = sum(_call_cost(u) for u in USAGE_LOG if u.get("tier") == "free")
+    paid_tokens = sum(u["total"] for u in USAGE_LOG if u.get("tier") == "paid")
+    free_tokens = sum(u["total"] for u in USAGE_LOG if u.get("tier") == "free")
+    unknown_tokens = total_tokens - paid_tokens - free_tokens
     report = {"total_tokens": total_tokens, "est_usd_approx": round(est_cost, 4),
               "est_jpy_approx": round(est_cost * 155),
-              "billing_tier": _BILLING_TIER,        # paid=実請求 / free=請求なし / unknown=判別不能
-              "billed": None if _BILLING_TIER == "unknown" else (_BILLING_TIER == "paid"),
+              "billing_tier": tier_summary,          # paid=実請求 / free=請求なし / mixed=キー切替あり / unknown=判別不能
+              "billed": billed,
+              "billed_usd_approx": round(paid_usd, 4),   # 実請求ぶんのみ（無料枠ぶんは含まない）
+              "billed_jpy_approx": round(paid_usd * 155),
+              "free_jpy_approx": round(free_usd * 155),  # 無料枠ぶん（請求なし。課金なら相当する額の参考値）
               "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
               "no_free_tier_models": billable,
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
@@ -570,10 +602,16 @@ def write_usage_report(out_dir: Path, stem: str):
               f" / out={r['candidates']:,} / 思考={r['thoughts']:,})  "
               f"{r['sec']:>6.1f}秒  ~${r['est_usd']}")
     jpy = round(est_cost * 155)
-    if _BILLING_TIER == "paid":
-        print(f"  合計 {total_tokens:,} トークン ／ **実請求 約 {jpy:,} 円**（${round(est_cost, 4)}）")
+    paid_jpy = round(paid_usd * 155)
+    if tier_summary == "mixed":
+        print(f"  合計 {total_tokens:,} トークン（無料枠 {free_tokens:,} ／ 課金 {paid_tokens:,}"
+              + (f" ／ 判定不能 {unknown_tokens:,}" if unknown_tokens else "") + "）")
+        print(f"  ／ **実請求は課金ぶんのみ 約 {paid_jpy:,} 円**（${round(paid_usd, 4)}。無料枠ぶんは請求なし）")
+        print("  ※ 実行中に無料枠上限/クレジット枯渇でキーが切り替わったため、課金と無料枠が混在する。")
+    elif tier_summary == "paid":
+        print(f"  合計 {total_tokens:,} トークン ／ **実請求 約 {paid_jpy:,} 円**（${round(paid_usd, 4)}）")
         print("  ※ 課金キーのため無料枠の割当はなく、この実行はそのまま請求される。公式単価による概算。")
-    elif _BILLING_TIER == "free":
+    elif tier_summary == "free":
         print(f"  合計 {total_tokens:,} トークン ／ **実請求なし**（無料枠。課金なら {jpy:,} 円相当）")
         print("  ※ 無料枠キーのため請求は発生しない。ただし RPD の上限がある。")
         print("  ※ 無料枠は利用規約上、人間のレビュアーが入出力を読む。機密音声を送らないこと。")
@@ -903,13 +941,15 @@ def _upload(client, path: Path):
     # アップロードも 429 を返す（クレジット枯渇はここで先に出る）。generate_content 側と同じ
     # 分類・リトライを通さないと生のトレースバックになり原因が読めない（2026-08-04 実際に発生）。
     up = None
-    for attempt in range(1, 4):
+    attempt = 1
+    while up is None:
         try:
             with open(path, "rb") as fh:
                 up = client.files.upload(
                     file=fh, config=types.UploadFileConfig(mime_type=mime, display_name=path.name))
-            break
         except (errors.ClientError, errors.ServerError) as e:
+            if _quota_kind(e) in ("credits", "day") and isinstance(client, KeyPool) and client.rotate():
+                continue                     # 新しいキーで同じファイルを再アップロード
             _raise_if_hard_quota(e)
             code = getattr(e, "code", None)
             if code not in (429, 500, 503) or attempt == 3:
@@ -918,6 +958,7 @@ def _upload(client, path: Path):
             print(f"\n  アップロード一時エラー（{code}）。{wait}秒後に再試行 ({attempt}/3)",
                   end="", flush=True)
             time.sleep(wait)
+            attempt += 1
     for _ in range(80):
         f = client.files.get(name=up.name)
         if f.state.name == "ACTIVE":
@@ -1323,6 +1364,87 @@ def _key_fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
+def _discover_pool_entries(primary_key: str, primary_label: str) -> list:
+    """primary キーに加え、GEMINI_API_KEY_<LABEL> 環境変数から見つかる他アカウントのキーを集める。
+    無料枠（RPD）は Google アカウント単位で別枠のため、複数アカウント分のキーを揃えておけば
+    1つが枠上限・クレジット枯渇になっても自動で次のアカウントへ回せる（齋藤指示 2026-08-08）。
+    値が同じキーは1つにまとめる（同じアカウントを二重に数えない）。"""
+    entries = []
+    seen = set()
+    if primary_key:
+        entries.append((primary_label, primary_key))
+        seen.add(_key_fingerprint(primary_key))
+    for name in sorted(os.environ):
+        if not name.startswith("GEMINI_API_KEY_"):
+            continue
+        val = os.environ.get(name, "").strip()
+        if not val:
+            continue
+        fp = _key_fingerprint(val)
+        if fp in seen:
+            continue
+        seen.add(fp)
+        entries.append((name[len("GEMINI_API_KEY_"):].lower(), val))
+    return entries
+
+
+class KeyPool:
+    """複数アカウントのAPIキーを保持し、無料枠の日次上限・前払いクレジット枯渇に
+    達したキーを自動でスキップして次のキーへ切替える。generate_with_retry / _upload の
+    呼び出し側からは genai.Client と同じ `.models` / `.files` インターフェースに見える。"""
+
+    def __init__(self, entries: list):
+        if not entries:
+            raise ValueError("キーが1つもありません")
+        self.entries = entries              # [(label, key), ...]
+        self.idx = 0
+        self._client = None
+        self._exhausted = set()             # 枠上限・枯渇済みの指紋
+        self.tiers = {}                     # 指紋 -> 'paid'/'free'/'unknown'（main() が実測して埋める）
+
+    def fingerprint(self, i: int = None) -> str:
+        _, key = self.entries[self.idx if i is None else i]
+        return _key_fingerprint(key)
+
+    def label(self, i: int = None) -> str:
+        return self.entries[self.idx if i is None else i][0]
+
+    def current_tier(self) -> str:
+        """現在アクティブなキーの課金状態。ローテーション後に呼び出し元の記録が
+        古いキーの状態のままにならないよう、呼び出しごとにこれを引いて使う。"""
+        return self.tiers.get(self.fingerprint(), "unknown")
+
+    @property
+    def current(self):
+        if self._client is None:
+            self._client = genai.Client(api_key=self.entries[self.idx][1])
+        return self._client
+
+    @property
+    def models(self):
+        return self.current.models
+
+    @property
+    def files(self):
+        return self.current.files
+
+    def rotate(self) -> bool:
+        """現在のキーを枯渇扱いにし、未使用の次のキーへ切替える。切替できれば True。
+        全キーを使い切っていれば False（呼び出し側は通常の QuotaExhaustedError へ進む）。"""
+        self._exhausted.add(self.fingerprint())
+        old_label = self.label()
+        for step in range(1, len(self.entries)):
+            cand = (self.idx + step) % len(self.entries)
+            if self.entries[cand][1] and _key_fingerprint(self.entries[cand][1]) not in self._exhausted:
+                self.idx = cand
+                self._client = None
+                global _API_KEY_DESC
+                _API_KEY_DESC += f" → {self.label()}（指紋 {self.fingerprint()}）"
+                print(f"\n  ⚠ キー［{old_label}］が枠上限/クレジット枯渇 → キー［{self.label()}］へ切替")
+                return True
+        return False
+
+
 def _classify_tier(e) -> str:
     """課金状態プローブの例外を 'paid' / 'free' / 'unknown' に分類する。
     無料枠プロジェクトは、無料枠を持たないモデルに対して free_tier のクォータを limit: 0 で返す。
@@ -1425,6 +1547,8 @@ def main():
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
     p.add_argument("--no-escalate", action="store_true",
                    help=f"品質不良時に {ESCALATE_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
+    p.add_argument("--no-key-pool", action="store_true",
+                   help="他アカウントの GEMINI_API_KEY_<LABEL> を自動プールしない（既定のキー1本だけを使う）")
     p.add_argument("--no-organize", action="store_true",
                    help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
     a = p.parse_args()
@@ -1480,20 +1604,32 @@ def main():
                  "（取得: https://aistudio.google.com/apikey）")
     global _API_KEY_DESC, _ESCALATE_ENABLED
     _ESCALATE_ENABLED = not a.no_escalate
-    _API_KEY_DESC = f"{key_origin} ／ 指紋 {_key_fingerprint(a.api_key)}"
     # 実行の冒頭に出す。途中でエラー終了しても「どのモデル・どのキーで動いたか」が
     # 必ず残るようにするため（末尾のレポートだけだと失敗時に何も分からない）。
     esc = f"品質不良時は {ESCALATE_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
     print(f"── Gemini API ──\n  モデル: {a.model}（文字起こし）／ {POST_MODEL}（後処理）／ {esc}")
-    print(f"  キー: {_API_KEY_DESC}")
-    client = genai.Client(api_key=a.api_key)
+
+    pool_entries = ([(key_origin, a.api_key)] if a.no_key_pool
+                     else _discover_pool_entries(a.api_key, key_origin))
+    key_pool = KeyPool(pool_entries)
+    _API_KEY_DESC = f"{pool_entries[0][0]}（指紋 {_key_fingerprint(pool_entries[0][1])}）"
+    if len(pool_entries) > 1:
+        print(f"  キー: {len(pool_entries)}件をプール（枠上限/枯渇で自動切替。既定は {pool_entries[0][0]}）")
+    else:
+        print(f"  キー: {_API_KEY_DESC}")
     # 課金状態を実測する。キー形式（AQ. / AIza）では判別できず、紐づく Cloud プロジェクトの
     # 課金状態で決まるため、無料枠を持たないモデルへの ping で確かめる（結果は指紋ごとにキャッシュ）。
     global _BILLING_TIER
-    _BILLING_TIER = detect_billing_tier(client, _key_fingerprint(a.api_key))
-    print(f"  課金状態: {_TIER_LABEL[_BILLING_TIER]}")
+    for i, (label, key) in enumerate(pool_entries):
+        fp = _key_fingerprint(key)
+        tier = detect_billing_tier(genai.Client(api_key=key), fp)
+        key_pool.tiers[fp] = tier
+        print(f"    {label:<12} 指紋 {fp}  {_TIER_LABEL[tier]}")
+        if i == 0:
+            _BILLING_TIER = tier          # 実行冒頭の表示用。実際の請求判定は呼び出しごとの記録で行う
     if _BILLING_TIER == "unknown":
         print("    （末尾のコスト表示は概算にとどまり、実請求かどうかは判別できません）")
+    client = key_pool
 
     # ── derive-only モード ──────────────────────────────────
     if a.derive_only:
