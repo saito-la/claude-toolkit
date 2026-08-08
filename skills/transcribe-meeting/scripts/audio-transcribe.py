@@ -11,14 +11,16 @@
   audio-transcribe.py <_parts/ ディレクトリ>      # 分割済みチャンクをそのまま処理
   audio-transcribe.py <音声> --context ctx.txt    # 固有名詞・発言者候補を文脈として注入
   audio-transcribe.py --check-numbers <transcript> <summary>  # 要約の数値欠落を検査（API不要・無課金）
-  audio-transcribe.py <音声> --derive             # 後処理も Gemini でやる（非推奨。既定は文字起こしのみ）
-  audio-transcribe.py --derive-only <transcript>  # 既存トランスクリプトから後処理だけ Gemini で（非推奨）
-  audio-transcribe.py <音声> --model gemini-2.5-pro  # 精度優先でproを使う
+  audio-transcribe.py --organize-only <transcript>            # 成果物の整理だけ（API不要・無課金）
 
-既定は**文字起こしのみ**。ケバ取り（verbatim）・凝縮（summary）は Gemini に投げず Claude 側で
-行う（齋藤方針 2026-08-05）。音声を文字にする工程だけが Gemini を必要とし、そこは無料枠で
-足りる。整形は契約済みの Claude で追加課金なくできるうえ、実測では後処理が Gemini 課金の
-大半を占めていた（記録18件・1,464円のうち後処理 585円）。手順は SKILL.md Step 4。
+**このスクリプトが Gemini を呼ぶのは文字起こしだけ。** ケバ取り（verbatim）・凝縮（summary）・
+タイトル生成は Gemini に投げず Claude 側で行う（齋藤方針 2026-08-05、2026-08-08 に呼び出しを削除）。
+音声を文字にする工程だけが Gemini を必要とし、整形は契約済みの Claude で追加課金なくできる。
+実測では後処理が Gemini 課金の大半を占めていた（記録18件・1,464円のうち後処理 585円。
+61分の会議1件では総額177円のうち後処理162円）。手順は SKILL.md Step 4。
+
+モデルは gemini-3.5-flash-lite の1つだけを使い、枠が尽きたらモデルではなくキーを替える
+（齋藤指示 2026-08-08）。理由は下の「モデルを1つに固定した根拠」を参照。
 """
 
 import argparse, datetime as _dt, hashlib, json, os, re, shutil, subprocess, sys, time
@@ -30,26 +32,28 @@ from google.genai import errors, types
 
 
 # ── モデル・閾値 ────────────────────────────────────────────────
-PRO_MODEL        = "gemini-pro-latest"     # 最高精度。無料枠が無く、--model で明示指定したときだけ使う
-ESCALATE_MODEL   = "gemini-3.5-flash"      # 品質不良時の格上げ先。lite より強く、無料枠がある
-FAST_MODEL       = "gemini-3.5-flash"      # このAPIキーの枠で指定モデルが使えない場合の格下げ先
-TRANSCRIBE_MODEL = "gemini-3.5-flash-lite" # 文字起こし既定
-POST_MODEL       = "gemini-3.5-flash"      # verbatim / summary 生成（後処理。整形のみのため高速モデルで足りる）
+TRANSCRIBE_MODEL = "gemini-3.5-flash-lite" # 文字起こし。**このスクリプトが使う唯一のモデル**
 #
-# 既定を lite にした根拠（2026-08-04 実測。61分の会議音声・15分×5チャンクで全モデル取り直し）:
+# モデルを1つに固定した根拠（2026-08-04 実測。61分の会議音声・15分×5チャンクで全モデル取り直し。
+# 正本は ai-environment/docs/automation/20260804-transcription-model-comparison.md）:
 #   gemini-3.5-flash-lite … 全チャンク尺の100%まで到達。1チャンクだけ話者ラベルが落ちたが再試行1回で回復。
-#                           61分を3分15秒・15円（課金キー）。反復ループ・無音からの捏造なし。
-#   gemini-3.1-flash-lite … 5チャンク中2チャンクで改行・話者ラベルを落とし、再試行2回＋再分割でも回復せず
-#                           （短く割っても同じ書式で返す）。要確認3区間・16リクエスト・22円。不採用。
+#                           61分を6リクエスト・約4分・19円。反復ループ・無音からの捏造なし。
+#   gemini-3.1-flash-lite … 5チャンク中2チャンクで改行・話者ラベルを落とし、再試行2回＋2段の再分割でも
+#                           回復せず（短く割っても同じ書式で返す）。実運用21リクエスト・34円・8分37秒で
+#                           要確認2区間が残る。**フォールバックにもしない**（枠を3.5倍食って結果が悪い）。
 #   gemini-2.5-flash-lite … 404「no longer available to new users」。当環境では選択肢にならない。
-#   gemini-pro-latest    … 無料枠が無いため方針により不採用（齋藤指示 2026-08-04）。精度も無条件に上ではなく、
-#                           既存の pro キャッシュには15分チャンク2本で約6分ずつの末尾欠落があった。
-# 注: gemini-2.5-* は新規プロジェクト（新規ユーザー）では generateContent 不可（404）。現行世代を既定にする。
+#   gemini-pro-latest    … 無料枠が無い。精度も上ではなく、pro キャッシュには15分チャンク2本で
+#                           約6分ずつの末尾欠落があった（被覆 61%・59%）。単価と精度は連動しない。
+#
+# **枠が尽きたときはモデルではなくキーを替える**（齋藤指示 2026-08-08）。無料枠のクォータは
+# 「Cloud プロジェクト × モデル」単位（429 のメトリクスに model 次元が付く。2026-08-08 実測）
+# なので他モデルへ逃げる手もあるが、上のとおり品質を満たす代替モデルが無い。キーを増やすほうが
+# 品質を落とさずに枠を増やせる（GEMINI_API_KEY_POOL 参照）。
+# 注: gemini-2.5-* は新規プロジェクト（新規ユーザー）では generateContent 不可（404）。
 LONG_AUDIO_THRESHOLD_SEC = 15 * 60      # これを超える音声は分割モードへ直行
 DEFAULT_CHUNK_MIN = 15                  # 分割時のチャンク長（分）。大きいほど総リクエスト数が減る
 MIN_CHARS_PER_SEC = 1.5                 # チャンク文字数の下限目安（下回れば途切れの疑い）
 MAX_CHARS_PER_SEC = 20                  # チャンク文字数の上限目安（上回れば尺に対して過大＝内容捏造の疑い。日本語の早口でも実測7-8字/秒程度）
-POST_BLOCK_CHARS = 24000                # verbatim/summary を分割処理する塊サイズ
 
 # 公式単価（USD / 100 万トークン）。出典 https://ai.google.dev/gemini-api/docs/pricing（2026-08-04 確認）。
 #
@@ -59,37 +63,25 @@ POST_BLOCK_CHARS = 24000                # verbatim/summary を分割処理する
 # コスト誤認の直接原因になった（2026-08-04 調査。docs/automation/20260804-gemini-transcription-cost-investigation.md）。
 #
 # over_200k は、プロンプトが 200k トークンを超えたときに適用される単価。既定チャンク 15 分は
-# 約 22 万トークンで常にこの帯に入るため、無視すると pro のコストを半分に見誤る。
+# 約 22 万トークンなので、15分より長いチャンクを指定したときだけこの帯に入る。
 # free_tier は無料枠の有無。False のモデルは 1 リクエスト目から課金される。
+#
+# **本スクリプトが呼べるモデルだけを載せる。** 使わないモデルの単価をここに置くと、
+# 改定時に検証もされないまま古い値が残る。過去の実行を現行単価で計算し直すための
+# 全モデルの表は backfill-cost-log.py が持つ（あちらは廃止済みモデルの履歴を扱うため）。
 PRICING = {
-    "gemini-pro-latest":       {"in": 2.00, "in_audio": 2.00, "out": 12.00, "free_tier": False,
-                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
-    "gemini-3.1-pro-preview":  {"in": 2.00, "in_audio": 2.00, "out": 12.00, "free_tier": False,
-                                "over_200k": {"in": 4.00, "in_audio": 4.00, "out": 18.00}},
-    "gemini-3.6-flash":        {"in": 1.50, "in_audio": 1.50, "out": 7.50,  "free_tier": True},
-    "gemini-3.5-flash":        {"in": 1.50, "in_audio": 1.50, "out": 9.00,  "free_tier": True},
     "gemini-3.5-flash-lite":   {"in": 0.30, "in_audio": 0.30, "out": 2.50,  "free_tier": True},
-    "gemini-3.1-flash-lite":   {"in": 0.25, "in_audio": 0.50, "out": 1.50,  "free_tier": True},
-    "gemini-2.5-flash":        {"in": 0.30, "in_audio": 1.00, "out": 2.50,  "free_tier": True},
-    "gemini-2.5-flash-lite":   {"in": 0.10, "in_audio": 0.30, "out": 0.40,  "free_tier": True},
 }
 
 # 無料枠の1日リクエスト数（RPD）の目安。Google が随時改定するため正本ではない。
 # 公式ドキュメントは 2026-08 時点で per-model の数値を掲載しておらず、
 # 「AI Studio の Rate limit ダッシュボードで確認せよ」としている（https://aistudio.google.com/rate-limit）。
 # ここの値は目安表示専用で、課金・枠の判定に使ってはいけない。
-# 環境変数 GEMINI_FLASH_RPD / GEMINI_PRO_RPD、または --rpd で上書き可。
+# 環境変数 GEMINI_FLASH_RPD、または --rpd で上書き可。
+# ⚠ この枠は「Cloud プロジェクト × モデル」単位（2026-08-08 実測）。キーを増やせば枠も増える。
 _RPD_FLASH = int(os.environ.get("GEMINI_FLASH_RPD", "250"))
-_RPD_PRO = int(os.environ.get("GEMINI_PRO_RPD", "100"))
 FREE_TIER_RPD = {
-    "gemini-3.6-flash":      _RPD_FLASH,
-    "gemini-3.5-flash":      _RPD_FLASH,
     "gemini-3.5-flash-lite": _RPD_FLASH,
-    "gemini-3.1-flash-lite": _RPD_FLASH,
-    "gemini-2.5-flash":      _RPD_FLASH,
-    "gemini-2.5-flash-lite": _RPD_FLASH,
-    "gemini-pro-latest":     _RPD_PRO,
-    "gemini-2.5-pro":        _RPD_PRO,
 }
 # 当ツール経由のリクエスト数・トークン数を太平洋時間の日付ごとに積算する（無料枠消費の目安）。
 # ⚠ このファイルは Mac ごとのローカル記録で、複数の Mac の消費は合算されない。
@@ -124,20 +116,14 @@ JOB_MAP_PATH = COST_LOG_DIR / "job-names.local.json"
 # 形式で「無料枠」と表示していた実装は、課金キーを無料枠と誤表示していた（2026-08-04 修正）。
 _API_KEY_DESC = "不明"
 
-# このキーが課金枠（Tier 1）か無料枠かの判定結果。'paid' / 'free' / 'unknown'。
-# これが分からないと、レポートの概算額が「実際に請求された額」なのか
-# 「無料枠で賄われて 0 円だった額」なのか区別できない（2026-08-04 まで区別していなかった）。
-_BILLING_TIER = "unknown"
-_TIER_LABEL = {
-    "paid": "課金（Tier 1）— この実行は実請求される",
-    "free": "無料枠 — 実請求なし。ただし RPD の上限がある",
-    "unknown": "不明（判定できず）",
-}
-# 無料枠を持たないモデル。これが通るかどうかでキーの課金状態が分かる
-# （無料枠プロジェクトでは quota limit: 0 で弾かれる）。
-TIER_PROBE_MODEL = "gemini-3.1-pro-preview"
-TIER_CACHE_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-key-tier.json"
-TIER_CACHE_DAYS = 30            # 課金状態はめったに変わらないので毎回問い合わせない
+# 課金状態の実測プローブ（無料枠を持たないモデルへ ping して 429 の種別を読む）は
+# 2026-08-08 に廃止した。プールに入れるキーを無料枠キーだけに限定する運用へ変えたため、
+# 実行ごとに「課金されるか」を測る必要が無くなった（齋藤指示 2026-08-08）。
+# 代わりに、プールへ入れた時点で無料枠であることを利用者が宣言する（GEMINI_API_KEY_POOL）。
+# レポートはその宣言を tier_source="declared" として記録し、実測と区別できるようにする。
+# ⚠ 宣言なので、キーの Cloud プロジェクトで課金を有効にすると黙って実請求に変わる。
+# 疑わしいときは gemini-key-status.py ではなく https://aistudio.google.com/billing で確認する。
+_TIER_DECLARED = "unknown"
 
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
@@ -196,15 +182,18 @@ def _record_usage(stage: str, model: str, resp, sec: float = 0.0, tier: str = "u
 
 
 def _record_quality(name: str, duration_sec, text: str, ok: bool, reason: str,
-                    attempts: int, escalated: bool = False, flagged: bool = False) -> None:
-    """1区間の文字起こし品質を記録する（一発合格／再試行回数／格上げ／要確認）。"""
+                    attempts: int, flagged: bool = False) -> None:
+    """1区間の文字起こし品質を記録する（一発合格／再試行回数／要確認）。
+
+    `escalated` フィールドは 2026-08-08 のモデル単一化で常に False になったが、
+    キーは残す。過去ログ（格上げが有効だった実行）と同じスキーマで読めるようにするため。"""
     chars = len(re.sub(r"\s", "", text or ""))
     QUALITY_LOG.append({
         "chunk": name,
         "duration_sec": round(duration_sec, 1) if duration_sec else None,
         "chars": chars,
         "chars_per_sec": round(chars / duration_sec, 2) if duration_sec else None,
-        "attempts": attempts, "escalated": escalated,
+        "attempts": attempts, "escalated": False,
         "ok": ok, "flagged": flagged, "reason": reason,
     })
 
@@ -219,8 +208,12 @@ def _pt_date() -> str:
         return (now_utc - _dt.timedelta(hours=7)).strftime("%Y-%m-%d")
 
 
-def _bump_daily_tally(model: str, tokens: int) -> None:
-    """当ツールの1リクエストを PT 日付・モデル別に積算する（他アプリの消費は含まない）。
+def _bump_daily_tally(model: str, tokens: int, key_label: str = "?") -> None:
+    """当ツールの1リクエストを PT 日付・「モデル × キー」別に積算する（他アプリの消費は含まない）。
+
+    キー別に分けるのは、無料枠のクォータが「Cloud プロジェクト（＝キー） × モデル」単位で、
+    キーをローテーションする以上「どの枠をどれだけ食ったか」がキーを跨いで合算されると
+    意味を失うため（2026-08-08 にキー次元を追加。それ以前の行はモデル単位で入っている）。
     `_machine` にホスト名を記録するのは、後からファイルを見たときに
     「これはどの Mac の記録か・全体ではない」が分かるようにするため。"""
     try:
@@ -229,7 +222,8 @@ def _bump_daily_tally(model: str, tokens: int) -> None:
         if DAILY_TALLY_PATH.exists():
             data = json.loads(DAILY_TALLY_PATH.read_text(encoding="utf-8"))
         data["_machine"] = os.uname().nodename
-        m = data.setdefault(_pt_date(), {}).setdefault(model, {"requests": 0, "tokens": 0})
+        m = data.setdefault(_pt_date(), {}).setdefault(f"{model}@{key_label}",
+                                                       {"requests": 0, "tokens": 0})
         m["requests"] += 1
         m["tokens"] += int(tokens or 0)
         days = sorted(k for k in data if not k.startswith("_"))
@@ -241,7 +235,7 @@ def _bump_daily_tally(model: str, tokens: int) -> None:
 
 
 def write_daily_tally_report() -> None:
-    """本日（PT基準）当ツールが消費した無料枠の目安を表示する。"""
+    """本日（PT基準）当ツールが消費した無料枠の目安を「モデル × キー」別に表示する。"""
     try:
         data = json.loads(DAILY_TALLY_PATH.read_text(encoding="utf-8")) if DAILY_TALLY_PATH.exists() else {}
     except (OSError, ValueError):
@@ -252,17 +246,19 @@ def write_daily_tally_report() -> None:
         return
     host = data.get("_machine", os.uname().nodename)
     print(f"\n── 本日の消費（この Mac〔{host}〕のみ・太平洋時間 {day} 基準） ──")
-    for model, m in sorted(today.items()):
+    for bucket, m in sorted(today.items()):
+        model = bucket.split("@", 1)[0]      # 2026-08-08 以前の行はキー無しの "モデル" だけ
         rpd = FREE_TIER_RPD.get(model)
         req = m["requests"]
         if rpd:
-            print(f"  {model:<22}本日 {req} リクエスト / RPD目安 {rpd}（残り約 {max(0, rpd - req)}）"
+            print(f"  {bucket:<34}本日 {req} リクエスト / RPD目安 {rpd}（残り約 {max(0, rpd - req)}）"
                   f"  累計トークン {m['tokens']:,}")
         else:
-            print(f"  {model:<22}本日 {req} リクエスト  累計トークン {m['tokens']:,}")
-    print("  ※ この集計は当ツール経由・この Mac だけのもの。無料枠（RPD）は API キー単位で、")
-    print("     他の Mac からの消費も同じ枠を食うが合算されない。RPD目安も Google が随時改定する。")
-    print("     → 枠・残高の判定にこの数字を使わないこと。実測は gemini-key-status.py、")
+            print(f"  {bucket:<34}本日 {req} リクエスト  累計トークン {m['tokens']:,}")
+    print("  ※ 枠は「キー（Cloud プロジェクト）× モデル」単位。上の各行が1つの枠に対応する。")
+    print("  ※ この集計は当ツール経由・この Mac だけのもの。他の Mac からの消費も同じ枠を食うが")
+    print("     合算されない。RPD目安も Google が随時改定する。")
+    print("     → 枠の判定にこの数字を使わないこと。実測は gemini-key-status.py、")
     print("       残枠は https://aistudio.google.com/rate-limit で確認する。")
 
 
@@ -349,11 +345,12 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
         try:
             t0 = time.time()
             resp = client.models.generate_content(**kwargs)
-            tier = client.current_tier() if isinstance(client, KeyPool) else _BILLING_TIER
+            tier = client.current_tier() if isinstance(client, KeyPool) else _TIER_DECLARED
             _record_usage(stage, kwargs.get("model", ""), resp, time.time() - t0, tier=tier)
             um = getattr(resp, "usage_metadata", None)
             _bump_daily_tally(kwargs.get("model", ""),
-                              getattr(um, "total_token_count", 0) if um else 0)
+                              getattr(um, "total_token_count", 0) if um else 0,
+                              client.label() if isinstance(client, KeyPool) else "?")
             return resp
         except (errors.ServerError, errors.ClientError) as e:
             code = getattr(e, "code", None)
@@ -446,9 +443,10 @@ def _thinking_cost(u: dict) -> float:
 
     thinking は `candidates_token_count` に含まれないが**出力単価でそのまま課金される**。
     2026-08-04 の commit 4e77f4c まで記録すらしておらず、7月中の消費が丸ごと不可視だった。
-    実測では格上げ先 gemini-3.5-flash で出力の10〜25倍の thinking が発生し、
+    実測では当時の格上げ先 gemini-3.5-flash で出力の10〜25倍の thinking が発生し、
     1件の会議（91分）で総額 690 円のうち 519 円（73%）を占めた。lite 系は thinking を出さない。
-    総額に混ぜると同じ誤りを繰り返すので、単独の項目として常に可視化する。"""
+    現在の唯一のモデルは lite なので 0 になるはずだが、項目自体は残す——値が 0 でないことが
+    「想定外のモデルで走った」という異常の検知になるため（総額に混ぜると同じ誤りを繰り返す）。"""
     pr = PRICING.get(u["model"])
     if not pr:
         return 0.0
@@ -498,6 +496,7 @@ def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
             "machine": os.uname().nodename,   # 集計はマシン別。合算は閲覧側で行う
             "job_id": _job_id(stem, out_dir),  # 実名は JOB_MAP_PATH（gitignore）側にだけ置く
             "billing_tier": report.get("billing_tier"),
+            "tier_source": report.get("tier_source"),   # declared=宣言 / 欠落や measured=実測（〜2026-08-08）
             "billed": report.get("billed"),
             "api_key": report.get("api_key"),
             "usd": round(usd, 4),
@@ -561,32 +560,27 @@ def write_usage_report(out_dir: Path, stem: str):
     billable = [m for m in sorted({r["model"] for r in rows})
                 if not PRICING.get(m, {}).get("free_tier", True)]
     quality = _quality_summary()
-    # tier はリクエストごとに記録済み（KeyPool でローテーションすると1回の実行内で
-    # 課金キー・無料枠キーが混在し得るため、起動時の _BILLING_TIER 1個では判定できない）。
-    has_paid = any(u.get("tier") == "paid" for u in USAGE_LOG)
-    has_free = any(u.get("tier") == "free" for u in USAGE_LOG)
-    has_unknown = any(u.get("tier") not in ("paid", "free") for u in USAGE_LOG)
-    tier_summary = "mixed" if (has_paid and has_free) else (
-        "paid" if has_paid else ("free" if has_free else "unknown"))
-    billed = True if has_paid else (None if has_unknown else False)
-    paid_usd = sum(_call_cost(u) for u in USAGE_LOG if u.get("tier") == "paid")
-    free_usd = sum(_call_cost(u) for u in USAGE_LOG if u.get("tier") == "free")
-    paid_tokens = sum(u["total"] for u in USAGE_LOG if u.get("tier") == "paid")
-    free_tokens = sum(u["total"] for u in USAGE_LOG if u.get("tier") == "free")
-    unknown_tokens = total_tokens - paid_tokens - free_tokens
+    # 課金状態は実測しない（プローブは 2026-08-08 廃止）。GEMINI_API_KEY_POOL に載せたキーは
+    # 無料枠であるという利用者の宣言として扱い、tier_source で実測でないことを明示する。
+    # 過去ログには実測値（'paid'/'free'/'mixed'）の行が残るので、集計側は両方を読めること。
+    tier_summary = _TIER_DECLARED if _TIER_DECLARED in ("free", "unknown") else "unknown"
+    billed = False if tier_summary == "free" else None
+    free_usd = est_cost if tier_summary == "free" else 0.0
     report = {"total_tokens": total_tokens, "est_usd_approx": round(est_cost, 4),
               "est_jpy_approx": round(est_cost * 155),
-              "billing_tier": tier_summary,          # paid=実請求 / free=請求なし / mixed=キー切替あり / unknown=判別不能
+              "billing_tier": tier_summary,          # free=請求なし（宣言） / unknown=判別しない
+              "tier_source": "declared",             # 実測ではない。'measured' の行は 2026-08-08 以前
               "billed": billed,
-              "billed_usd_approx": round(paid_usd, 4),   # 実請求ぶんのみ（無料枠ぶんは含まない）
-              "billed_jpy_approx": round(paid_usd * 155),
+              "billed_usd_approx": 0.0,              # 課金キーはプールに入れない運用
+              "billed_jpy_approx": 0,
               "free_jpy_approx": round(free_usd * 155),  # 無料枠ぶん（請求なし。課金なら相当する額の参考値）
               "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
               "no_free_tier_models": billable,
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
               "api_sec": round(api_sec, 1),
               "note": "est_usd は公式単価（音声入力単価・200k超の階層を反映）による概算。"
-                      "billed=true なら課金キーでこの額が実請求される。billed=false なら無料枠キーで請求は発生しない。"
+                      "billing_tier は実測ではなく GEMINI_API_KEY_POOL による宣言（tier_source=declared）。"
+                      "キーの Cloud プロジェクトで課金を有効にすると、この表示のまま実請求に変わる。"
                       "elapsed_sec は本コマンドの総経過時間、api_sec は Gemini 応答待ちの合計。",
               "quality": quality, "by_stage": rows,
               "quality_detail": QUALITY_LOG, "calls": USAGE_LOG}
@@ -602,22 +596,14 @@ def write_usage_report(out_dir: Path, stem: str):
               f" / out={r['candidates']:,} / 思考={r['thoughts']:,})  "
               f"{r['sec']:>6.1f}秒  ~${r['est_usd']}")
     jpy = round(est_cost * 155)
-    paid_jpy = round(paid_usd * 155)
-    if tier_summary == "mixed":
-        print(f"  合計 {total_tokens:,} トークン（無料枠 {free_tokens:,} ／ 課金 {paid_tokens:,}"
-              + (f" ／ 判定不能 {unknown_tokens:,}" if unknown_tokens else "") + "）")
-        print(f"  ／ **実請求は課金ぶんのみ 約 {paid_jpy:,} 円**（${round(paid_usd, 4)}。無料枠ぶんは請求なし）")
-        print("  ※ 実行中に無料枠上限/クレジット枯渇でキーが切り替わったため、課金と無料枠が混在する。")
-    elif tier_summary == "paid":
-        print(f"  合計 {total_tokens:,} トークン ／ **実請求 約 {paid_jpy:,} 円**（${round(paid_usd, 4)}）")
-        print("  ※ 課金キーのため無料枠の割当はなく、この実行はそのまま請求される。公式単価による概算。")
-    elif tier_summary == "free":
+    if tier_summary == "free":
         print(f"  合計 {total_tokens:,} トークン ／ **実請求なし**（無料枠。課金なら {jpy:,} 円相当）")
-        print("  ※ 無料枠キーのため請求は発生しない。ただし RPD の上限がある。")
-        print("  ※ 無料枠は利用規約上、人間のレビュアーが入出力を読む。機密音声を送らないこと。")
+        print("  ※ GEMINI_API_KEY_POOL のキーを無料枠として扱っている（実測はしない）。RPD の上限はある。")
+        print("  ※ 無料枠は利用規約上、人間のレビュアーが入出力を読む（機密区分の判断はこの表示ではなく運用側で行う）。")
     else:
         print(f"  合計 {total_tokens:,} トークン ／ 概算 ${round(est_cost, 4)}（約 {jpy:,} 円）")
-        print("  ※ 課金状態を判定できなかったため、実請求か無料枠内かは不明。")
+        print("  ※ プールが宣言されていないため、実請求か無料枠内かは判別しない。"
+              "GEMINI_API_KEY_POOL で無料枠キーを明示すること。")
     if billable:
         print(f"  ⚠ 無料枠が無いモデルを使用: {', '.join(billable)}（無料枠キーでも 429 になる）")
     # thinking の寄与を独立して出す。ここが総額の過半になる実行があり、混ぜると原因が見えない
@@ -627,8 +613,8 @@ def write_usage_report(out_dir: Path, stem: str):
         pct = round(th_usd / est_cost * 100) if est_cost else 0
         print(f"  うち thinking（思考トークン）: {th_tok:,} トークン ／ 約 {round(th_usd * 155):,} 円（総額の {pct}%）")
         if pct >= 40:
-            print("  ⚠ thinking が総額の4割超。lite 系は thinking を出さないため、"
-                  "格上げ（--no-escalate で抑止）と後処理モデルの見直しが効く。")
+            print("  ⚠ thinking が総額の4割超。既定の lite は thinking を出さないはずなので、"
+                  "--model で lite 以外を指定していないか確認する。")
     print(f"\n── 所要時間 ──")
     print(f"  総経過 {_fmt_dur(elapsed)}（うち Gemini 応答待ち {_fmt_dur(api_sec)}）")
     write_quality_report()
@@ -811,6 +797,12 @@ def build_transcribe_prompt(context_hint: str = "") -> str:
     return p
 
 
+# ── 後処理（Step 4）の生成ルール ──────────────────────────────────
+# ⚠ 以下4つのプロンプト定数は、このスクリプトからは送信しない（2026-08-08 に Gemini 呼び出しを
+# 削除した）。**ケバ取り・凝縮・数値補完を行う Claude が読むための、生成ルールの正本**である。
+# SKILL.md Step 4 はここを読めと指示しており、規則を SKILL.md 側へ写していない
+# （同じ規則が2箇所にあるとズレるため）。**削除・要約してはいけない。**
+# 各ルールには実測の根拠が入っている（例：凝縮版の金額・台数の保持率 35% → 70%）。
 VERBATIM_PROMPT = """以下の会議文字起こしから、フィラー（えー、あのー、そのー、えっと、あの、まあ（文頭の意味のない使用）、なんか（意味のない使用）など）と明らかな言い淀み（同じ語の直後の繰り返し）のみを除去してください。
 
 ルール：
@@ -832,7 +824,7 @@ VERBATIM_PROMPT = """以下の会議文字起こしから、フィラー（え�
 #   (3) 概数へのぼかしを明示的に禁じる
 #   (4) 書いたあとに照合する手順を課す
 # の4点に作り替えたところ、同じモデルのままで 70% まで回復した。
-# 残りは機械的な検査＋修復パス（_missing_material_numbers / repair_summary）で埋める。
+# 残りは機械的な検査（--check-numbers）で拾い、SUMMARY_REPAIR_PROMPT の作法に従って埋める。
 CONDENSED_PROMPT = """以下の会議文字起こしから議事録要約を作成してください。
 
 ## 最優先の制約：事実は1つも落とさない
@@ -972,26 +964,25 @@ def _upload(client, path: Path):
     raise RuntimeError(f"タイムアウト: {path.name} が ACTIVE になりませんでした")
 
 
-# 課金枠で pro が使えない等の理由で一度格下げしたら、以降のチャンクも同じモデルを使う
-_FORCED_MODEL = None
-
-
 def transcribe_file(client, path: Path, prompt: str, model: str, stage: str = "transcribe") -> str:
-    global _FORCED_MODEL
-    use = _FORCED_MODEL or model
-    print(f"  [{use}] {path.name} アップロード中", end="", flush=True)
+    print(f"  [{model}] {path.name} アップロード中", end="", flush=True)
     f = _upload(client, path)
     print(" → 文字起こし中...", end="", flush=True)
     try:
         resp = generate_with_retry(
-            client, stage, model=use, contents=[prompt, f],
+            client, stage, model=model, contents=[prompt, f],
             config=types.GenerateContentConfig(temperature=0.0))
     except errors.ClientError as e:
         client.files.delete(name=f.name)
-        if _is_tier_block(e) and use != FAST_MODEL:
-            print(f"\n  ⚠ {use} はこのAPIキーの課金枠で利用不可。{FAST_MODEL} に切替えて継続します。")
-            _FORCED_MODEL = FAST_MODEL
-            return transcribe_file(client, path, prompt, FAST_MODEL, stage)
+        # モデルがこのキーの枠で使えない（limit: 0）場合、以前は別モデルへ格下げしていたが、
+        # 使えるモデルを1つに固定した以上、逃げ先はモデルではなく別のキーしかない。
+        # generate_with_retry が既にキー切替を試みたうえでここへ来ているので、
+        # 黙って別モデルに落とさず、原因を明示して止める。
+        if _is_tier_block(e):
+            raise QuotaExhaustedError(
+                f"{model} がプール内のどのキーの枠でも使えません（quota limit: 0）。"
+                "キーが紐づく Cloud プロジェクトでこのモデルが提供されているかを "
+                "https://aistudio.google.com/rate-limit で確認してください。") from e
         raise
     except Exception:                        # QuotaExhaustedError 等でもアップロード済みファイルを掃除
         try:
@@ -1004,38 +995,24 @@ def transcribe_file(client, path: Path, prompt: str, model: str, stage: str = "t
     return resp.text or ""
 
 
-# 品質不良時に pro へ自動格上げするか。--no-escalate で無効化する。
-# 無効化が必要な理由: コストや課金枠の都合で「このモデルだけで走らせる」と決めた実行を、
-# 自動格上げが黙って破ってしまう（2026-08-04 に実際に発生。flash 指定で走らせたのに
-# 1チャンクの品質不良から pro に格上げされ、pro を使わない前提が崩れた）。
-_ESCALATE_ENABLED = True
-
-
-def escalate(model: str) -> str:
-    """品質不良時の格上げ先を返す。格上げ無効なら、または既に格上げ先以上ならそのまま。
-    格上げ先を pro ではなく ESCALATE_MODEL にしているのは、無料枠の無いモデルへ自動で
-    移ると「無料枠のあるモデルだけを使う」方針（齋藤指示 2026-08-04）が黙って破られるため。
-    pro を使いたいときは --model gemini-pro-latest で明示する。"""
-    if not _ESCALATE_ENABLED:
-        return model
-    return ESCALATE_MODEL if model not in (ESCALATE_MODEL, PRO_MODEL) else model
-
-
 def transcribe_with_recovery(client, path: Path, prompt: str, model: str,
                              stage: str = "transcribe", duration_sec: float = None,
                              depth: int = 0) -> str:
-    """1チャンクを文字起こしし、品質不良なら再試行→格上げ→再分割で回復する。"""
+    """1チャンクを文字起こしし、品質不良なら再試行→再分割で回復する。
+
+    かつては再試行の2回目で上位モデルへ格上げしていたが、使えるモデルを1つに固定したため
+    廃止した（2026-08-08）。格上げが有効だったのは 3.5-flash-lite → 3.5-flash の組だけで、
+    その 3.5-flash は thinking が出力の10〜25倍出てコストの主役になっていた（実測で総額の
+    41%、格上げが起きた実行では 64〜73%）。同じ失敗モードは再試行1回でも回復している。"""
     min_chars = int(duration_sec * MIN_CHARS_PER_SEC) if duration_sec else None
     max_chars = int(duration_sec * MAX_CHARS_PER_SEC) if duration_sec else None
     attempts = []
     for attempt in range(2):                       # 初回＋再試行1
-        m = model if attempt == 0 else escalate(model)
-        text = normalize_lines(collapse_loops(transcribe_file(client, path, prompt, m, stage)))
+        text = normalize_lines(collapse_loops(transcribe_file(client, path, prompt, model, stage)))
         ok, reason = check_quality(text, min_chars=min_chars, max_chars=max_chars,
                                    duration_sec=duration_sec)
         if ok:
-            _record_quality(path.name, duration_sec, text, True, "",
-                            attempt + 1, escalated=(m != model))
+            _record_quality(path.name, duration_sec, text, True, "", attempt + 1)
             return text
         print(f"    ⚠ 品質不良: {reason} → 再試行（{attempt + 1}/2）")
         attempts.append((text, reason))
@@ -1053,14 +1030,13 @@ def transcribe_with_recovery(client, path: Path, prompt: str, model: str,
         for c in subs:
             d = probe_duration(c)
             out.append(_shift_timestamps(
-                transcribe_with_recovery(client, c, prompt, escalate(model), stage, d, depth + 1),
+                transcribe_with_recovery(client, c, prompt, model, stage, d, depth + 1),
                 offset))
             offset += d or 0
         return "\n".join(out)
     text, reason = max(attempts, key=lambda a: len(a[0]))
     print(f"    ✗ 品質を確保できず。該当区間に注記を付与: {reason}")
-    _record_quality(path.name, duration_sec, text, False, reason,
-                    2, escalated=True, flagged=True)
+    _record_quality(path.name, duration_sec, text, False, reason, 2, flagged=True)
     return f"[要確認: 文字起こし品質低下（{reason}）]\n{text}"
 
 
@@ -1105,22 +1081,7 @@ def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-# ── verbatim / summary の生成（長尺は分割処理） ──────────────────
-def _split_for_post(text: str, max_chars: int = POST_BLOCK_CHARS) -> list:
-    """Part 区切りを優先しつつ max_chars 以下の塊にまとめる。"""
-    parts = re.split(r'(?=^## Part )', text, flags=re.M)
-    blocks, cur = [], ""
-    for p in parts:
-        if cur and len(cur) + len(p) > max_chars:
-            blocks.append(cur)
-            cur = p
-        else:
-            cur += p
-    if cur.strip():
-        blocks.append(cur)
-    return blocks or [text]
-
-
+# ── 凝縮版の数値チェック（API 不要・無課金。--check-numbers から使う） ──────
 # 凝縮版から落ちてはいけない数値の型。金額・台数に絞るのは、これが議題の核になりやすく
 # （予算・契約・人員）、かつ「8階」「1回」のような些末値と機械的に区別できるため。
 # 対象を広げると誤検知が増えて、修復パスが ASR の誤認識まで本文へ運び込む。
@@ -1154,81 +1115,10 @@ def _fabricated_numbers(src: str, summary: str) -> list:
     return sorted({_norm_num(x) for x in MATERIAL_NUM_RE.findall(summary)} - s)
 
 
-def repair_summary(client, src: str, summary: str) -> str:
-    """凝縮版から落ちた金額・台数を1回だけ補完する。
-    プロンプトの作り替えだけでは保持率が7割で頭打ちになるため（2026-08-04 実測）、
-    残りは検査して埋める。失敗しても元の要約を壊さない。"""
-    miss = _missing_material_numbers(src, summary)
-    if not miss:
-        print("  数値チェック: 金額・台数の脱落なし")
-        return summary
-    print(f"  数値チェック: 金額・台数が {len(miss)} 種 欠落（{', '.join(sorted(miss))}）→ 補完中...",
-          end="", flush=True)
-    blob = "\n\n".join(f"### {v[0]}\n```\n{v[1]}\n```" for v in miss.values())
-    try:
-        fixed = (generate_with_retry(
-            client, "summary-repair", model=POST_MODEL,
-            contents=SUMMARY_REPAIR_PROMPT.format(summary=summary, missing=blob)).text or "").strip()
-    except Exception as e:                        # 補完は付加価値なので、失敗しても本体は返す
-        print(f" 失敗（{type(e).__name__}）。元の要約をそのまま使います")
-        return summary
-    if len(fixed) < len(summary) * 0.8:           # 作り直されて短くなったら採用しない
-        print(" 補完結果が短すぎるため不採用")
-        return summary
-    left = _missing_material_numbers(src, fixed)
-    print(f" 完了（残 {len(left)} 種）")
-    if left:
-        print(f"    ⚠ 補完できなかった値: {', '.join(sorted(left))}（原文を確認してください）")
-    return fixed
-
-
-def _summary_marker_style(text: str) -> str:
-    """凝縮版（summary）の確度記号を簡略表記にする（transcript/verbatim には適用しない）。
-    〔◎〕（確実）は付けない ／ 〔○〕→○ ／ 〔△〕→△ ／ 〔？〕→？。氏名直後に残った空白も整える。"""
-    text = re.sub(r"〔◎[^〕]*〕", "", text)          # 確実は記号を落とす
-    text = text.replace("〔○〕", "○").replace("〔△〕", "△").replace("〔？〕", "？")
-    text = re.sub(r"〔([○△？])[^〕]*〕", r"\1", text)  # 注釈付き（例〔○・推定〕）も記号のみに
-    text = re.sub(r"[ 　]+([、。：:）)])", r"\1", text)  # 記号除去で生じた余分な空白
-    return text
-
-
-GENERIC_STEM_RE = re.compile(
-    r"^(untitled|new[ _-]?recording(\s*\d+)?|recording(\s*\d+)?|rec\d*|"
-    r"voice[ _-]?memo(s)?(\s*\d+)?|img[ _-]?\d+|vid[ _-]?\d+|audio[ _-]?\d+|\d+|"
-    r"録音(\s*\d+)?|無題)$",
-    re.IGNORECASE,
-)
-
-
-def looks_generic(stem: str) -> bool:
-    """録音機器・OSの既定ファイル名（Untitled、New Recording 等）かどうかを判定する。"""
-    return bool(GENERIC_STEM_RE.match(stem.strip()))
-
-
-TITLE_PROMPT = """以下は会議の凝縮要約です。この内容を表すタイトルを2行で出力してください（他は一切出力しない）。
-
-1行目: 日本語タイトル（15字以内、体言止め、括弧・記号・「」なし）
-2行目: 同じ内容を表す英語 kebab-case のスラッグ（2〜5語、ハイフン区切り、すべて小文字、日付や拡張子は付けない）
-
----
-{text}"""
-
-
-def derive_title(client, summary_text: str):
-    """要約から (日本語タイトル, kebab-case スラッグ) を生成する。失敗時は (None, None)。"""
-    try:
-        resp = generate_with_retry(client, "title", model=POST_MODEL,
-                                   contents=TITLE_PROMPT.format(text=summary_text[:6000])).text or ""
-    except Exception:
-        return None, None
-    lines = [l.strip(" 　#*「」") for l in resp.strip().splitlines() if l.strip()]
-    if not lines:
-        return None, None
-    if len(lines) < 2:
-        return lines[0], None
-    title, raw_slug = lines[0], lines[1]
-    slug = re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", raw_slug.lower())).strip("-")
-    return title, (slug or None)
+# 数値の補完（repair_summary）・確度記号の簡略化（_summary_marker_style）・
+# タイトル生成（derive_title）は Gemini 呼び出しだったため 2026-08-08 に削除した。
+# いずれも Claude 側の Step 4 で行う。規則の正本は SUMMARY_REPAIR_PROMPT（補完の作法）と
+# SKILL.md（確度記号の簡略化・既定名からのリネーム）。
 
 
 def organize_outputs(out_dir: Path, stem: str, audio: Path = None) -> Path:
@@ -1273,68 +1163,6 @@ def organize_outputs(out_dir: Path, stem: str, audio: Path = None) -> Path:
     return dest
 
 
-def derive_files(client, transcript: str, out_dir: Path, stem: str) -> tuple:
-    """トランスクリプトから verbatim（ケバ取り）と summary（凝縮）を生成する。
-    stem が録音機器の既定名（Untitled 等）の場合、内容から生成したタイトルでファイル一式をリネームする。
-    戻り値は (verbatim_out, summary_out, 最終的な stem)。"""
-    transcript_path = out_dir / f"{stem}_transcript.txt"
-    verbatim_out = out_dir / f"{stem}_verbatim.txt"
-    summary_out = out_dir / f"{stem}_summary.md"
-    blocks = _split_for_post(transcript)
-
-    print(f"\nケバ取り版を生成中（{len(blocks)}ブロック）...", end="", flush=True)
-    vparts = []
-    for b in blocks:
-        vt = generate_with_retry(client, "verbatim", model=POST_MODEL,
-                                 contents=VERBATIM_PROMPT.format(text=b)).text or ""
-        vparts.append(collapse_loops(vt))
-    verbatim_out.write_text("\n".join(vparts).strip() + "\n", encoding="utf-8")
-    print(f" 完了: {verbatim_out.name}")
-
-    print(f"凝縮版を生成中（{len(blocks)}ブロック）...", end="", flush=True)
-    sparts = []
-    for b in blocks:
-        st = generate_with_retry(client, "summary", model=POST_MODEL,
-                                 contents=CONDENSED_PROMPT.format(text=b)).text or ""
-        sparts.append(st.strip())
-    if len(sparts) == 1:
-        summary = sparts[0]
-    else:                                          # 区間要約を1本に統合
-        summary = generate_with_retry(client, "summary-merge", model=POST_MODEL,
-                                      contents=MERGE_PROMPT.format(text="\n\n".join(sparts))).text or ""
-    summary = _summary_marker_style(collapse_loops(summary).strip())
-    print(" 完了")
-    # 凝縮版は「省略厳禁」と指示していても金額・台数を落とす。プロンプトで7割まで戻せるが、
-    # 残りは検査して埋める（2026-08-04 実測: 35% → 70%（プロンプト改良）→ 100%（本チェック））。
-    summary = repair_summary(client, transcript, summary)
-    fab = _fabricated_numbers(transcript, summary)
-    if fab:
-        print(f"    ⚠ 原文に無い金額・台数が要約にある: {', '.join(fab)}"
-              f"（合計値などモデルの計算の可能性。要確認）")
-
-    title, slug = derive_title(client, summary)
-    body = f"# {title}\n\n{summary}\n" if title else summary + "\n"
-
-    new_stem = stem
-    if slug and looks_generic(stem):
-        new_stem = slug
-        for src, dst in (
-            (transcript_path, out_dir / f"{new_stem}_transcript.txt"),
-            (verbatim_out, out_dir / f"{new_stem}_verbatim.txt"),
-        ):
-            if src.exists():
-                if dst.exists():
-                    dst.unlink()
-                src.rename(dst)
-        verbatim_out = out_dir / f"{new_stem}_verbatim.txt"
-        summary_out = out_dir / f"{new_stem}_summary.md"
-        print(f"\nタイトルを内容から生成: {stem} → {new_stem}")
-
-    summary_out.write_text(body, encoding="utf-8")
-    print(f"  凝縮版: {summary_out.name}")
-    return verbatim_out, summary_out, new_stem
-
-
 # ── API キー・GUI ───────────────────────────────────────────────
 def _load_api_key_from_config() -> str:
     config_file = Path.home() / ".config" / "claude-toolkit" / "gemini-api-key"
@@ -1364,18 +1192,56 @@ def _key_fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
 
 
+def _pool_entries_from_declaration() -> list:
+    """環境変数 GEMINI_API_KEY_POOL が指定されていれば、そのラベル順にキーを組む。
+
+    無料枠のクォータは「Cloud プロジェクト × モデル」単位（2026-08-08 実測）で、使えるモデルは
+    1つに固定した。したがって枠を増やす唯一の手段はアカウント（キー）を増やすことになる。
+
+    自動検出ではなく明示リストにした理由（齋藤指示 2026-08-08）:
+      1. **課金キーを混ぜない。** 課金状態の実測プローブを廃止したため、課金キーが紛れ込んでも
+         気づけない。GEMINI_API_KEY_POOL に載せたキーは「無料枠である」という利用者の宣言として扱う。
+      2. **順序を決められる。** 自動検出は環境変数名のアルファベット順で、しかも GEMINI_API_KEY
+         （＝既定キー）が先頭に来ていた。既定キーが課金キーだと、無料枠に手を付ける前に課金が始まる。
+
+    書式: GEMINI_API_KEY_POOL="NHO SAITOLA"（空白またはカンマ区切り。GEMINI_API_KEY_<ラベル> を参照）
+    """
+    raw = os.environ.get("GEMINI_API_KEY_POOL", "").strip()
+    if not raw:
+        return []
+    entries, seen, missing = [], set(), []
+    for label in re.split(r"[,\s]+", raw):
+        if not label:
+            continue
+        val = os.environ.get(f"GEMINI_API_KEY_{label.upper()}", "").strip()
+        if not val:
+            missing.append(label)
+            continue
+        fp = _key_fingerprint(val)
+        if fp in seen:                       # 同じキーを二重に数えない（枠は共通）
+            continue
+        seen.add(fp)
+        entries.append((label.lower(), val))
+    if missing:
+        print(f"  ⚠ GEMINI_API_KEY_POOL に指定されたが環境変数が未設定: {', '.join(missing)}"
+              f"（GEMINI_API_KEY_<ラベル> を設定してください）")
+    return entries
+
+
 def _discover_pool_entries(primary_key: str, primary_label: str) -> list:
-    """primary キーに加え、GEMINI_API_KEY_<LABEL> 環境変数から見つかる他アカウントのキーを集める。
-    無料枠（RPD）は Google アカウント単位で別枠のため、複数アカウント分のキーを揃えておけば
-    1つが枠上限・クレジット枯渇になっても自動で次のアカウントへ回せる（齋藤指示 2026-08-08）。
-    値が同じキーは1つにまとめる（同じアカウントを二重に数えない）。"""
+    """GEMINI_API_KEY_POOL が未設定のときのフォールバック。primary キーに加え、
+    GEMINI_API_KEY_<LABEL> 環境変数から見つかる他アカウントのキーを集める。
+    値が同じキーは1つにまとめる（同じアカウントを二重に数えない）。
+
+    ⚠ この経路は課金キーを排除できない（プローブ廃止で課金状態を測れないため）。
+    複数キーを持つ環境では GEMINI_API_KEY_POOL で明示すること。"""
     entries = []
     seen = set()
     if primary_key:
         entries.append((primary_label, primary_key))
         seen.add(_key_fingerprint(primary_key))
     for name in sorted(os.environ):
-        if not name.startswith("GEMINI_API_KEY_"):
+        if not name.startswith("GEMINI_API_KEY_") or name == "GEMINI_API_KEY_POOL":
             continue
         val = os.environ.get(name, "").strip()
         if not val:
@@ -1393,14 +1259,16 @@ class KeyPool:
     達したキーを自動でスキップして次のキーへ切替える。generate_with_retry / _upload の
     呼び出し側からは genai.Client と同じ `.models` / `.files` インターフェースに見える。"""
 
-    def __init__(self, entries: list):
+    def __init__(self, entries: list, declared_tier: str = "unknown"):
         if not entries:
             raise ValueError("キーが1つもありません")
         self.entries = entries              # [(label, key), ...]
         self.idx = 0
         self._client = None
         self._exhausted = set()             # 枠上限・枯渇済みの指紋
-        self.tiers = {}                     # 指紋 -> 'paid'/'free'/'unknown'（main() が実測して埋める）
+        # 'free'（GEMINI_API_KEY_POOL による宣言）または 'unknown'（フォールバック経路）。
+        # 実測プローブは 2026-08-08 に廃止したので、ここに 'paid' が入ることはない。
+        self.declared_tier = declared_tier
 
     def fingerprint(self, i: int = None) -> str:
         _, key = self.entries[self.idx if i is None else i]
@@ -1410,9 +1278,10 @@ class KeyPool:
         return self.entries[self.idx if i is None else i][0]
 
     def current_tier(self) -> str:
-        """現在アクティブなキーの課金状態。ローテーション後に呼び出し元の記録が
-        古いキーの状態のままにならないよう、呼び出しごとにこれを引いて使う。"""
-        return self.tiers.get(self.fingerprint(), "unknown")
+        """このプールのキーの課金状態（宣言値）。キーごとに変えないのは、
+        GEMINI_API_KEY_POOL が「ここに載せるのは無料枠キーだけ」という宣言だからで、
+        1本でも課金キーが混ざれば宣言そのものが誤っていることになる。"""
+        return self.declared_tier
 
     @property
     def current(self):
@@ -1443,53 +1312,6 @@ class KeyPool:
                 print(f"\n  ⚠ キー［{old_label}］が枠上限/クレジット枯渇 → キー［{self.label()}］へ切替")
                 return True
         return False
-
-
-def _classify_tier(e) -> str:
-    """課金状態プローブの例外を 'paid' / 'free' / 'unknown' に分類する。
-    無料枠プロジェクトは、無料枠を持たないモデルに対して free_tier のクォータを limit: 0 で返す。
-    クレジット枯渇は「課金キーだが残高切れ」なので paid 側に分類する（無料枠ではない）。"""
-    if getattr(e, "code", None) != 429:
-        return "unknown"
-    msg = str(getattr(e, "message", "") or e)
-    if _quota_kind(e) == "credits":
-        return "paid"
-    if "free_tier" in msg and "limit: 0" in msg:
-        return "free"
-    return "unknown"
-
-
-def detect_billing_tier(client, fingerprint: str) -> str:
-    """キーが課金枠か無料枠かを実測する。指紋ごとに結果をキャッシュし、通常は問い合わせない。
-    判定コストは初回の1リクエストのみ（課金キーでも数十トークン、無料枠キーは 429 で無料）。"""
-    today = _dt.date.today().isoformat()
-    cache = {}
-    try:
-        if TIER_CACHE_PATH.exists():
-            cache = json.loads(TIER_CACHE_PATH.read_text(encoding="utf-8"))
-        hit = cache.get(fingerprint)
-        if hit:
-            age = (_dt.date.fromisoformat(today) - _dt.date.fromisoformat(hit["checked"])).days
-            if age < TIER_CACHE_DAYS and hit.get("tier") in _TIER_LABEL:
-                return hit["tier"]
-    except (OSError, ValueError, KeyError):
-        cache = {}
-    try:
-        client.models.generate_content(model=TIER_PROBE_MODEL, contents="ping")
-        tier = "paid"
-    except (errors.ClientError, errors.ServerError) as e:
-        tier = _classify_tier(e)
-    except Exception:                        # ネットワーク断等。判定不能をキャッシュしない
-        return "unknown"
-    if tier != "unknown":                    # 判定できたときだけ残す
-        try:
-            TIER_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            cache[fingerprint] = {"tier": tier, "checked": today}
-            TIER_CACHE_PATH.write_text(json.dumps(cache, ensure_ascii=False, indent=2),
-                                       encoding="utf-8")
-        except OSError:
-            pass
-    return tier
 
 
 def _run_gui() -> tuple:
@@ -1523,21 +1345,14 @@ def main():
     p.add_argument("--chunk-minutes", type=int, default=DEFAULT_CHUNK_MIN, metavar="N",
                    help=f"分割時のチャンク長（分）。デフォルト: {DEFAULT_CHUNK_MIN}")
     p.add_argument("--split", action="store_true", help="最初から分割モードで実行")
-    p.add_argument("--model", default=TRANSCRIBE_MODEL, help=f"文字起こしモデル。デフォルト: {TRANSCRIBE_MODEL}")
+    # モデルは選択肢を PRICING に載っているものだけに限定する。ここを自由入力にすると、
+    # 単価表に無いモデルが指定されてコスト計算が黙って 0 円になる。
+    # 実質 gemini-3.5-flash-lite の1択（他モデルを外した根拠はファイル冒頭の定数コメント）。
+    p.add_argument("--model", default=TRANSCRIBE_MODEL, choices=sorted(PRICING),
+                   help=f"文字起こしモデル。デフォルト: {TRANSCRIBE_MODEL}")
     p.add_argument("--rpd", type=int, metavar="N",
-                   help="無料枠の1日リクエスト数（RPD）目安を上書き（本日消費表示用。既定 flash=250）")
+                   help="無料枠の1日リクエスト数（RPD）目安を上書き（本日消費表示用。既定 250）")
     p.add_argument("--context", help="固有名詞・発言者候補を書いたテキストファイル（プロンプトに注入）")
-    # 既定は文字起こしのみ。ケバ取り・凝縮は Gemini に投げず Claude 側で行う（齋藤方針 2026-08-05）。
-    # 実測で後処理が Gemini 課金の大半を占めた（記録18件・1,464円のうち後処理 585円。
-    # ケバ取りは入力とほぼ同量を出力し、そこに thinking が上乗せされる）。文字起こしは
-    # 音声を扱うため Gemini が必要だが、整形は契約済みの Claude で追加課金なくできる。
-    p.add_argument("--derive", action="store_true",
-                   help="verbatim/summary も Gemini で生成する（非推奨。既定は文字起こしのみで、"
-                        "後処理は Claude 側で行う。Claude を使えない環境向けのフォールバック）")
-    p.add_argument("--no-derive", action="store_true",
-                   help="（既定の挙動。後方互換のために残置。指定しても何も変わらない）")
-    p.add_argument("--derive-only", metavar="TRANSCRIPT",
-                   help="既存トランスクリプトから verbatim/summary を Gemini で再生成する（非推奨）")
     p.add_argument("--check-numbers", nargs=2, metavar=("TRANSCRIPT", "SUMMARY"),
                    help="要約から落ちた金額・台数と、原文に無い数値を検査するだけ（API 不要・無課金）。"
                         "Claude が作った要約の検証に使う")
@@ -1545,12 +1360,8 @@ def main():
                    help="成果物の整理だけを行う（summary.md 以外を <stem>/ へ一括。API 不要・無課金）。"
                         "後処理を Claude 側で行ったあとに使う")
     p.add_argument("--gui", action="store_true", help="ファイル選択ダイアログを表示して実行")
-    p.add_argument("--no-escalate", action="store_true",
-                   help=f"品質不良時に {ESCALATE_MODEL} へ自動格上げしない（--model で指定したモデルだけを使う）")
     p.add_argument("--no-key-pool", action="store_true",
-                   help="他アカウントの GEMINI_API_KEY_<LABEL> を自動プールしない（既定のキー1本だけを使う）")
-    p.add_argument("--no-organize", action="store_true",
-                   help="成果物の整理をしない（既定は summary.md 以外を <stem>/ に一括）")
+                   help="キーをプールしない（GEMINI_API_KEY_POOL を無視し、既定のキー1本だけを使う）")
     a = p.parse_args()
 
     # ── 数値チェックのみ（API を呼ばない＝無課金） ──────────────────────
@@ -1590,73 +1401,46 @@ def main():
         organize_outputs(tpath.parent, stem, audio=audio)
         sys.exit(0)
 
-    if a.rpd:                                # RPD 目安を上書き（対象モデル＋既定 flash）
+    if a.rpd:                                # RPD 目安を上書き
         FREE_TIER_RPD[a.model] = a.rpd
-        FREE_TIER_RPD["gemini-2.5-flash"] = a.rpd
 
-    if a.api_key:
-        key_origin = "コマンドライン --api-key"
-    else:
-        a.api_key, key_origin = _resolve_api_key()
-    if not a.api_key:
-        sys.exit("エラー: Gemini API キーが未設定。環境変数 GEMINI_API_KEY を設定するか、"
-                 "~/.config/claude-toolkit/gemini-api-key にキーを保存してください。"
-                 "（取得: https://aistudio.google.com/apikey）")
-    global _API_KEY_DESC, _ESCALATE_ENABLED
-    _ESCALATE_ENABLED = not a.no_escalate
+    global _API_KEY_DESC, _TIER_DECLARED
     # 実行の冒頭に出す。途中でエラー終了しても「どのモデル・どのキーで動いたか」が
     # 必ず残るようにするため（末尾のレポートだけだと失敗時に何も分からない）。
-    esc = f"品質不良時は {ESCALATE_MODEL} へ格上げ" if _ESCALATE_ENABLED else "格上げなし（--no-escalate）"
-    print(f"── Gemini API ──\n  モデル: {a.model}（文字起こし）／ {POST_MODEL}（後処理）／ {esc}")
+    print(f"── Gemini API ──\n  モデル: {a.model}（文字起こしのみ。後処理は Claude 側）")
 
-    pool_entries = ([(key_origin, a.api_key)] if a.no_key_pool
-                     else _discover_pool_entries(a.api_key, key_origin))
-    key_pool = KeyPool(pool_entries)
+    # キーの決め方は3通り。優先順は --api-key → GEMINI_API_KEY_POOL → 自動検出。
+    # POOL を自動検出より優先するのは、複数キーがある環境で「どれを使うか」を
+    # 環境変数名のアルファベット順という無関係な要因に委ねないため。
+    if a.api_key:
+        pool_entries, _TIER_DECLARED = [("コマンドライン --api-key", a.api_key)], "unknown"
+    elif not a.no_key_pool and (declared := _pool_entries_from_declaration()):
+        pool_entries, _TIER_DECLARED = declared, "free"
+    else:
+        key, key_origin = _resolve_api_key()
+        if not key:
+            sys.exit("エラー: Gemini API キーが未設定。GEMINI_API_KEY_POOL でプールを宣言するか、"
+                     "環境変数 GEMINI_API_KEY を設定するか、"
+                     "~/.config/claude-toolkit/gemini-api-key にキーを保存してください。"
+                     "（取得: https://aistudio.google.com/apikey）")
+        pool_entries = ([(key_origin, key)] if a.no_key_pool
+                        else _discover_pool_entries(key, key_origin))
+        _TIER_DECLARED = "unknown"
+    if not pool_entries:
+        sys.exit("エラー: GEMINI_API_KEY_POOL に有効なキーが1つもありません。")
+
+    key_pool = KeyPool(pool_entries, declared_tier=_TIER_DECLARED)
     _API_KEY_DESC = f"{pool_entries[0][0]}（指紋 {_key_fingerprint(pool_entries[0][1])}）"
-    if len(pool_entries) > 1:
-        print(f"  キー: {len(pool_entries)}件をプール（枠上限/枯渇で自動切替。既定は {pool_entries[0][0]}）")
+    labels = "・".join(l for l, _ in pool_entries)
+    if _TIER_DECLARED == "free":
+        print(f"  キー: {len(pool_entries)}件をプール（{labels}）。枠上限で先頭から順に自動切替")
+        print("    無料枠キーとして宣言されている（GEMINI_API_KEY_POOL）。課金状態は実測しない")
+    elif len(pool_entries) > 1:
+        print(f"  キー: {len(pool_entries)}件をプール（{labels}）。枠上限/枯渇で自動切替")
+        print("    ⚠ 課金キーが混ざっていても検出できない。GEMINI_API_KEY_POOL での明示を推奨")
     else:
         print(f"  キー: {_API_KEY_DESC}")
-    # 課金状態を実測する。キー形式（AQ. / AIza）では判別できず、紐づく Cloud プロジェクトの
-    # 課金状態で決まるため、無料枠を持たないモデルへの ping で確かめる（結果は指紋ごとにキャッシュ）。
-    global _BILLING_TIER
-    for i, (label, key) in enumerate(pool_entries):
-        fp = _key_fingerprint(key)
-        tier = detect_billing_tier(genai.Client(api_key=key), fp)
-        key_pool.tiers[fp] = tier
-        print(f"    {label:<12} 指紋 {fp}  {_TIER_LABEL[tier]}")
-        if i == 0:
-            _BILLING_TIER = tier          # 実行冒頭の表示用。実際の請求判定は呼び出しごとの記録で行う
-    if _BILLING_TIER == "unknown":
-        print("    （末尾のコスト表示は概算にとどまり、実請求かどうかは判別できません）")
     client = key_pool
-
-    # ── derive-only モード ──────────────────────────────────
-    if a.derive_only:
-        tpath = Path(a.derive_only).expanduser().resolve()
-        if not tpath.exists():
-            sys.exit(f"エラー: トランスクリプトが見つかりません: {tpath}")
-        transcript = tpath.read_text(encoding="utf-8")
-        stem = tpath.stem[:-len("_transcript")] if tpath.stem.endswith("_transcript") else tpath.stem
-        # 文字起こし時の usage.json があれば取り込み、トークン・品質を上書きせず累積表示する
-        prev = tpath.parent / f"{stem}_usage.json"
-        if prev.exists():
-            try:
-                data = json.loads(prev.read_text(encoding="utf-8"))
-                USAGE_LOG[:0] = data.get("calls", [])
-                QUALITY_LOG[:0] = data.get("quality_detail", [])
-            except (ValueError, OSError):
-                pass
-        old_stem = stem
-        v, s, stem = derive_files(client, transcript, tpath.parent, stem)
-        if stem != old_stem and prev.exists():
-            prev.unlink()                    # 旧stemのusage.jsonは新stem側に統合されるため削除
-        write_usage_report(tpath.parent, stem)
-        if not a.no_organize:
-            organize_outputs(tpath.parent, stem)
-        print(f"\n生成ファイル:\n  {tpath.parent / (stem + '_summary.md')}"
-              f"\n  （他は {tpath.parent / stem}/ に格納）")
-        return
 
     if a.gui or not a.audio:
         a.audio, a.output = _run_gui()
@@ -1713,27 +1497,13 @@ def main():
     out.write_text(result, encoding="utf-8")
     print(f"\n文字起こし完了: {out}")
 
-    if a.derive:
-        _, _, stem = derive_files(client, result, out.parent, stem)
-
     write_usage_report(out.parent, stem)
-    # 整理（既定）：summary.md 以外（音声・チャンク・transcript/verbatim・usage）を <stem>/ に一括。
-    # 後処理をしていない場合は summary が無い＝整理せず transcript を直下に残す（話者比定の作業用）。
-    organized = a.derive and not a.no_organize
-    if organized:
-        organize_outputs(out.parent, stem, audio=target if target.is_file() else None)
+    # 整理はここでは行わない。summary がまだ無い段階（話者比定の作業用に transcript を
+    # 直下に残す）なので、Step 4 まで終えてから --organize-only で実行する。
     print("\n生成ファイル:")
-    if organized:
-        print(f"  {out.parent / (stem + '_summary.md')}")
-        print(f"  （他は {out.parent / stem}/ に格納）")
-    else:
-        print(f"  {out.parent / (stem + '_transcript.txt')}")
-        if a.derive:
-            print(f"  {out.parent / (stem + '_verbatim.txt')}")
-            print(f"  {out.parent / (stem + '_summary.md')}")
-        else:
-            print("\n次は話者比定（SKILL.md Step 3）→ ケバ取り・凝縮を Claude 側で生成（Step 4）。"
-                  "\nGemini への後処理は既定で行わない（課金の大半を占めるため）。")
+    print(f"  {out.parent / (stem + '_transcript.txt')}")
+    print("\n次は話者比定（SKILL.md Step 3）→ ケバ取り・凝縮を Claude 側で生成（Step 4）。"
+          "\nこのスクリプトが Gemini を呼ぶのは文字起こしだけ（後処理が課金の大半を占めていたため）。")
 
 
 if __name__ == "__main__":

@@ -8,14 +8,17 @@
   だが 429 のエラーメッセージには理由が書かれている。実際に軽い呼び出しを投げて
   その分類を読めば、残高ページを見るまでもなく状態が確定する。それを機械化したもの。
 
-  複数アカウントのキー（無料枠／課金）を環境変数で持ち分ける構成では、
-  「どのキーが実際に使われているか」の取り違えも起きる。キーは値を出さず指紋で識別し、
-  由来（どの環境変数か・設定ファイルか）を併記する。
+  複数アカウントのキーを環境変数で持ち分ける構成では、「どのキーが実際に使われているか」の
+  取り違えも起きる。キーは値を出さず指紋で識別し、由来（どの環境変数か・設定ファイルか）を併記する。
+
+  ⚠ 課金枠か無料枠かの判定は行わない（2026-08-08 にプローブを廃止）。どのキーをプールに
+  入れるかは GEMINI_API_KEY_POOL での宣言に委ね、課金状態は
+  https://aistudio.google.com/billing で確認する。
 
 使い方:
   python3 gemini-key-status.py           # 全キーの状態を表示
   python3 gemini-key-status.py --json    # JSON で出力
-  python3 gemini-key-status.py --model gemini-3.5-flash
+  python3 gemini-key-status.py --model gemini-3.5-flash-lite
 
 終了コード: 0=実効キーが使える / 1=実効キーが使えない / 2=キーが1つも無い
 """
@@ -27,13 +30,12 @@ from google import genai
 from google.genai import errors
 
 CONFIG_FILE = Path.home() / ".config" / "claude-toolkit" / "gemini-api-key"
-PING_MODEL = "gemini-3.5-flash"     # 最安・最小の呼び出しで状態だけ見る
-# 無料枠を持たないモデル。通れば課金枠（Tier 1）、free_tier の limit: 0 で弾かれれば無料枠。
-# キー形式（AQ. / AIza）では判別できず、紐づく Cloud プロジェクトの課金状態で決まるため実測する。
-TIER_PROBE_MODEL = "gemini-3.1-pro-preview"
-TIER_LABEL = {"paid": "課金（Tier 1）＝使うと実請求される",
-              "free": "無料枠＝実請求なし。RPD 上限あり。機密音声は送らない",
-              "unknown": "判定できず"}
+PING_MODEL = "gemini-3.5-flash-lite"     # 本スクリプト群が実際に使う唯一のモデルで状態を見る
+
+# 課金枠か無料枠かの実測プローブ（無料枠を持たないモデルへ ping して 429 の種別を読む）は
+# 2026-08-08 に廃止した。プールへ入れるキーを無料枠キーだけに限る運用へ変えたため、
+# キーごとに課金状態を測る必要が無くなった（齋藤指示 2026-08-08）。
+# 課金状態を確かめたいときは https://aistudio.google.com/billing を見る。
 
 
 def fingerprint(key: str) -> str:
@@ -47,7 +49,9 @@ def collect_keys() -> list:
     if eff:
         found.append(("環境変数 GEMINI_API_KEY（実効）", eff))
     for name, val in sorted(os.environ.items()):
-        if name.startswith("GEMINI_API_KEY") and name != "GEMINI_API_KEY" and val:
+        # GEMINI_API_KEY_POOL はキーではなくラベルの一覧（"NHO SAITOLA" 等）。
+        # 接頭辞が一致するので、除外しないとラベル文字列をキーとして ping してしまう。
+        if name.startswith("GEMINI_API_KEY") and name not in ("GEMINI_API_KEY", "GEMINI_API_KEY_POOL") and val:
             found.append((f"環境変数 {name}", val))
     if CONFIG_FILE.exists():
         val = CONFIG_FILE.read_text(encoding="utf-8").strip()
@@ -87,27 +91,6 @@ def check(key: str, model: str) -> tuple:
         return "ERROR", str(e)[:120]
 
 
-def check_tier(key: str) -> str:
-    """課金枠か無料枠かを実測する。'paid' / 'free' / 'unknown'。
-    どちらかで 429 の意味も対処も変わる（無料枠＝待てば回復／課金＝クレジット購入）ので、
-    キーの状態を見るときは併せて出す。クレジット枯渇は「課金キーの残高切れ」なので paid。"""
-    # Client は変数に束縛してから呼ぶこと。式の中で作って即呼ぶと、リクエスト中に
-    # ガベージコレクトされて "Cannot send a request, as the client has been closed" になる。
-    client = genai.Client(api_key=key)
-    try:
-        client.models.generate_content(model=TIER_PROBE_MODEL, contents="ping")
-        return "paid"
-    except (errors.ClientError, errors.ServerError) as e:
-        if getattr(e, "code", None) != 429:
-            return "unknown"
-        msg = str(getattr(e, "message", "") or e)
-        if "prepayment" in msg.lower() or "credits are depleted" in msg.lower():
-            return "paid"
-        return "free" if ("free_tier" in msg and "limit: 0" in msg) else "unknown"
-    except Exception:
-        return "unknown"
-
-
 def main():
     p = argparse.ArgumentParser(description="Gemini API キーの利用可否を実測して表示する")
     p.add_argument("--model", default=PING_MODEL, help=f"ping に使うモデル（既定: {PING_MODEL}）")
@@ -132,8 +115,7 @@ def main():
     for fp, entry in by_fp.items():
         status, detail = check(entry["key"], a.model)
         results.append({"fingerprint": fp, "origins": entry["origins"],
-                        "status": status, "detail": detail,
-                        "tier": check_tier(entry["key"])})
+                        "status": status, "detail": detail})
 
     effective = next((r for r in results
                       if any("実効" in o for o in r["origins"])), None)
@@ -146,7 +128,7 @@ def main():
         print(f"── Gemini API キーの状態（ping モデル: {a.model}）──")
         for r in results:
             mark = "✓" if r["status"] == "OK" else "✗"
-            print(f"  {mark} 指紋 {r['fingerprint']}  {r['status']}  ［{TIER_LABEL[r['tier']]}］")
+            print(f"  {mark} 指紋 {r['fingerprint']}  {r['status']}")
             print(f"      {r['detail']}")
             for o in r["origins"]:
                 print(f"      由来: {o}")
