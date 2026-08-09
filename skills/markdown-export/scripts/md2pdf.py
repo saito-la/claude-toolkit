@@ -175,6 +175,9 @@ def main() -> None:
         # pandoc: md → standalone HTML（CSSを<head>へ、pagetitleのみ設定＝可視タイトル二重化を回避）
         r = subprocess.run(
             ["pandoc", str(src), "-f", "markdown+autolink_bare_uris", "-s",
+             # 画像等はbase64でHTMLに埋め込む。中間HTMLを一時ディレクトリに置くため、
+             # 埋め込まないと md からの相対パス（figures/foo.png 等）をChromeが解決できない。
+             "--embed-resources", f"--resource-path={src.parent}",
              *includes,
              "-M", f"pagetitle={pagetitle}", "-o", str(html)],
             capture_output=True, text=True)

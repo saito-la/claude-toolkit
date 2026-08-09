@@ -187,6 +187,8 @@ def main() -> None:
         "-M",
         f"lang={args.lang}",  # 文書言語をdocxに記録（Google Docs変換後の既定言語になる。既定 ja-JP）
         f"--reference-doc={template_path}",
+        # md からの相対パスの画像を、呼び出し時の cwd に依らず解決する
+        f"--resource-path={input_path.parent}",
         "-o",
         str(output_path),
     ]
