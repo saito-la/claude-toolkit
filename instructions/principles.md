@@ -20,6 +20,7 @@
 - スプレッドシート設計 → `spreadsheet-structure.md`
 - 手順書・マニュアル → `sop-manual-authoring.md`
 - ファイル・フォルダの命名／整理 → `file-naming-and-folder-hygiene.md`
+- 案件（出張・イベント・治験等）の情報をどのフォルダに置くか → `case-record-single-location.md`
 - 積み残し（next action）の管理 → `action-items-convention.md`
 - セッション終了時のテンポラリファイル整理 → `session-end-auto-file-move.md`
 
