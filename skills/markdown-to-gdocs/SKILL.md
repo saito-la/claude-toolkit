@@ -13,7 +13,7 @@ description: markdownやdocxをテンプレート体裁のGoogle Docsとして�
 
 ```bash
 cd <mdのあるフォルダ>
-python3 <markdown-exportのディレクトリ>/scripts/md2docx.py foo.md -o foo.docx --template gothic --page-numbers
+python3 <markdown-exportのディレクトリ>/scripts/md2docx.py foo.md -o foo.docx --page-numbers
 node <このSKILL.mdのディレクトリ>/scripts/upload-gdoc.mjs foo.docx <folderID> --account <account>   # → 新DocのURL/IDを表示
 node <このSKILL.mdのディレクトリ>/scripts/format-gdoc.mjs <docID> --account <account> --preset formal-ja  # 体裁適用（在り物Docにその場で適用）
 ```
@@ -22,6 +22,7 @@ node <このSKILL.mdのディレクトリ>/scripts/format-gdoc.mjs <docID> --acc
 - 体裁の再調整は `format-gdoc.mjs <docID>` を再実行するだけ（再アップロード不要）。
 - 内容を変えたら 1→3 を再実行して新Docを作る（旧Docは Drive API でゴミ箱へ）。
 - `--preset` は `format-gdoc.mjs` 冒頭の `PRESETS` オブジェクトで定義。既定は `formal-ja`（余白1.5cm・全文メイリオ・行間0.85・タイトル中央/サブタイトル右詰め）。用途別プリセットを増やす場合はここに追記する。
+- `format-gdoc.mjs` が当てるのは本文への直接書式であり、**名前付きスタイル（標準テキスト・見出し）は Docs API では変更できない**。既定の書式は docx テンプレート側が決めるため、`md2docx.py` の既定テンプレート `meiryo` と `formal-ja` プリセットは同じ値に揃えてある。片方を変えるならもう片方も合わせる。
 
 ## セットアップ
 

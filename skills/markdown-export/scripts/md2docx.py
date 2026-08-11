@@ -19,6 +19,7 @@ from pathlib import Path
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 TEMPLATES = {
     "gothic": TEMPLATE_DIR / "reference-gothic.docx",
+    "meiryo": TEMPLATE_DIR / "reference-meiryo.docx",
     "default": TEMPLATE_DIR / "reference-default.docx",
 }
 MIN_COL_RATIO = 0.08  # 1列あたり最低8%
@@ -155,8 +156,8 @@ def main() -> None:
     parser.add_argument(
         "--template",
         choices=list(TEMPLATES.keys()),
-        default="gothic",
-        help="使用するテンプレート (default: gothic)",
+        default="meiryo",
+        help="使用するテンプレート (default: meiryo)",
     )
     parser.add_argument("--page-numbers", action="store_true",
                         help="全ページのフッター中央にページ番号を付ける")

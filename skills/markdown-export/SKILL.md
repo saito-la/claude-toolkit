@@ -15,7 +15,7 @@ python3 $SKILL/scripts/md2pdf.py input.md                   # → PDF（A4・余
 python3 $SKILL/scripts/combine-pdfs.py -o out.pdf --title "..." a.md b.md ...   # 複数mdを1冊に結合
 ```
 
-- **md2docx**：pandoc変換＋表の列幅自動調整＋表罫線付与。テンプレートは同梱の `templates/reference-gothic.docx`（全文ゴシック・既定）と `templates/reference-default.docx`（游明朝/游ゴシック標準）。
+- **md2docx**：pandoc変換＋表の列幅自動調整＋表罫線付与。テンプレートは同梱の `templates/reference-meiryo.docx`（全文メイリオ・本文10pt・行間0.85・既定）、`templates/reference-gothic.docx`（全文ゴシック・本文10.5pt）、`templates/reference-default.docx`（游明朝/游ゴシック標準）。meiryo は名前付きスタイル自体にフォント・サイズ・行間を持たせてあり、Google Docs へ変換したあとも既定の書式が保たれる（`markdown-to-gdocs` の `formal-ja` プリセットと同値）。
 - **md2pdf**：pandoc → 整形HTML → Chrome印刷 → ページ番号スタンプの3段。本文全幅・内容依存の表列幅・クリック可能なURL・下中央の「n / N」が既定の仕上がり。
 - **combine-pdfs**：各mdの1行目 `# 見出し` をタイトルとして自動取得し、表紙に目次（開始頁付き）、本文にPDFしおり（既定「資料1　タイトル」形式）を生成する。本文側のH1は書き換えない。調査ダイジェスト集・添付資料の分冊など、複数PDFをまとめる場面ではワンオフのマージをせず本スクリプトに統一する。
 
