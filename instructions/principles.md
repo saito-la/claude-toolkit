@@ -29,5 +29,6 @@
 - 案件（出張・イベント・治験等）の情報をどのフォルダに置くか → `case-record-single-location.md`
 - 積み残し（next action）の管理 → `action-items-convention.md`
 - セッション終了時のテンポラリファイル整理 → `session-end-auto-file-move.md`
+- APIキー・トークン・パスワードの扱い（画面に出さない・追跡ファイルに置かない） → `secret-handling.md`
 
 `~/.claude/conventions/` には各自が追加した規約も入る。上の一覧に無いファイルがあれば、それも同じ扱いで読む。
