@@ -126,10 +126,31 @@ _API_KEY_DESC = "不明"
 # 疑わしいときは gemini-key-status.py ではなく https://aistudio.google.com/billing で確認する。
 _TIER_DECLARED = "unknown"
 
+# ラベル（GEMINI_API_KEY_<ラベル> の <ラベル>）から、そのキーがどのアカウント・どの
+# Cloud プロジェクトのものかを引く任意の対応表。**キーの値は書かない**（指紋とラベルだけで
+# 足りる）。未設定でも動く：その場合の表示はラベルと指紋に留める。
+# 例: {"nho": {"account": "user@example.org", "project": "my-proj", "plan": "free"}}
+KEY_ACCOUNTS_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-accounts.json"
+
+# 指紋 → 課金状態の記録（実測プローブ時代の遺産。2026-08-08 以降は更新されない）。
+# 参照するのは「無料枠と宣言したキーが paid として記録されていないか」の照合だけ。
+# 食い違いは黙って実請求が始まる唯一の経路なので、実行後のサマリで警告する。
+KEY_TIER_PATH = Path.home() / ".config" / "claude-toolkit" / "gemini-key-tier.json"
+
 # 各 Gemini 呼び出しのトークン消費（stage 別）を記録する
 USAGE_LOG: list = []
 # 各文字起こし区間の品質判定（一発合格／再試行／格上げ／要確認）を記録する
 QUALITY_LOG: list = []
+# いま処理中のチャンク名と、それを処理しているキーのラベル。_record_usage が消費を
+# チャンクへ帰属させるために読む（逐次処理なのでグローバルで足りる）。区間ごとに
+# 「どのキーで・何トークン・何秒かかったか」を出せないと、キーがローテーションした
+# 実行で「どの区間がどの枠を食ったか」を後から追えない。
+_CURRENT_CHUNK: str = ""
+_CURRENT_KEY_LABEL: str = ""
+
+# ラベル → 指紋。プールに載せた全キーぶんを main で作る。**値そのものは持たない**
+# （指紋は sha256 の先頭8桁で、キーを復元できない。表示・ログに出せるのはこちらだけ）。
+_KEY_FINGERPRINTS: dict = {}
 # プログラム開始時刻（経過時間の計測用）
 _START = time.time()
 
@@ -179,15 +200,23 @@ def _record_usage(stage: str, model: str, resp, sec: float = 0.0, tier: str = "u
         # 古いキーの状態のまま「実請求」と誤表示しないため、呼び出しごとに記録する
         # （2026-08-08：ローテーション後も起動時の tier のまま全額を実請求と誤表示するバグを修正）。
         "tier": tier,
+        # どの区間を・どのキーで処理したか。チャンク別の明細表示と、キーごとの消費内訳に使う。
+        "chunk": _CURRENT_CHUNK or None,
+        "key_label": _CURRENT_KEY_LABEL or None,
     })
 
 
 def _record_quality(name: str, duration_sec, text: str, ok: bool, reason: str,
-                    attempts: int, flagged: bool = False) -> None:
+                    attempts: int, flagged: bool = False, source: str = "api",
+                    key_label: str = None) -> None:
     """1区間の文字起こし品質を記録する（一発合格／再試行回数／要確認）。
 
     `escalated` フィールドは 2026-08-08 のモデル単一化で常に False になったが、
-    キーは残す。過去ログ（格上げが有効だった実行）と同じスキーマで読めるようにするため。"""
+    キーは残す。過去ログ（格上げが有効だった実行）と同じスキーマで読めるようにするため。
+
+    `source` は "api"（この実行で文字起こしした）か "cache"（既存の <chunk>.txt を再利用した）。
+    キャッシュ再利用も記録するのは、区間別の明細で全区間を並べたときに「表に出ていない区間」を
+    作らないため——欠けていると、この実行で品質を確かめた区間だけが全体だと読めてしまう。"""
     chars = len(re.sub(r"\s", "", text or ""))
     QUALITY_LOG.append({
         "chunk": name,
@@ -196,6 +225,8 @@ def _record_quality(name: str, duration_sec, text: str, ok: bool, reason: str,
         "chars_per_sec": round(chars / duration_sec, 2) if duration_sec else None,
         "attempts": attempts, "escalated": False,
         "ok": ok, "flagged": flagged, "reason": reason,
+        "source": source,
+        "key_label": key_label if key_label is not None else (_CURRENT_KEY_LABEL or None),
     })
 
 
@@ -347,6 +378,12 @@ def generate_with_retry(client, stage: str, max_attempts: int = 4, **kwargs):
             t0 = time.time()
             resp = client.models.generate_content(**kwargs)
             tier = client.current_tier() if isinstance(client, KeyPool) else _TIER_DECLARED
+            # 消費を記録する直前に、実際に処理したキーのラベルを取り直す。ローテーションは
+            # このループの中で起きるので、呼び出し前に控えた値では切替後の消費を旧キーに
+            # 付け替えてしまう（tier を呼び出しごとに記録しているのと同じ理由）。
+            global _CURRENT_KEY_LABEL
+            if isinstance(client, KeyPool):
+                _CURRENT_KEY_LABEL = client.label()
             _record_usage(stage, kwargs.get("model", ""), resp, time.time() - t0, tier=tier)
             um = getattr(resp, "usage_metadata", None)
             _bump_daily_tally(kwargs.get("model", ""),
@@ -380,6 +417,7 @@ def _quality_summary() -> dict:
     if not QUALITY_LOG:
         return {}
     n = len(QUALITY_LOG)
+    cached = sum(1 for q in QUALITY_LOG if q.get("source") == "cache")
     first_try = sum(1 for q in QUALITY_LOG
                     if q["ok"] and q["attempts"] == 1 and not q["escalated"])
     recovered = sum(1 for q in QUALITY_LOG
@@ -392,11 +430,15 @@ def _quality_summary() -> dict:
         grade = "C（要確認区間あり）"
     elif recovered:
         grade = "B（再試行・格上げで回復）"
+    elif cached and not first_try:
+        # 全区間がキャッシュ由来。この実行では1文字も文字起こししていないので、
+        # 「一発合格」と書くと今回の成績のように読める。品質は満たしているが出所が違う。
+        grade = "A（全区間がキャッシュ再利用・品質は充足）"
     else:
         grade = "A（全区間が一発合格）"
     return {
         "segments": n, "pass_first_try": first_try, "recovered": recovered,
-        "flagged": len(flagged),
+        "flagged": len(flagged), "cached": cached,
         "covered_min": round(covered / 60, 1) if covered else None,
         "total_chars": chars,
         "chars_per_sec_avg": round(sum(cps) / len(cps), 2) if cps else None,
@@ -406,20 +448,84 @@ def _quality_summary() -> dict:
     }
 
 
+def _usage_by_chunk() -> dict:
+    """チャンク名 → {calls, tokens, sec, keys} の集計（区間別明細の消費欄に使う）。"""
+    agg: dict = {}
+    for u in USAGE_LOG:
+        c = u.get("chunk")
+        if not c:
+            continue
+        d = agg.setdefault(c, {"calls": 0, "tokens": 0, "sec": 0.0, "keys": []})
+        d["calls"] += 1
+        d["tokens"] += u.get("total", 0) or 0
+        d["sec"] += u.get("sec", 0.0) or 0.0
+        kl = u.get("key_label")
+        if kl and kl not in d["keys"]:
+            d["keys"].append(kl)                # 区間の途中でキーが替わると複数入る
+    return agg
+
+
+def _disp_width(s: str) -> int:
+    """端末上の表示幅（全角＝2）。Python の書式指定は文字数で数えるため、
+    日本語が混ざる列（判定ラベル等）を `{:>12}` で揃えると必ずズレる。"""
+    import unicodedata
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in s)
+
+
+def _pad(s: str, width: int, right: bool = False) -> str:
+    """表示幅を基準に空白で詰める（右寄せは right=True）。"""
+    fill = " " * max(0, width - _disp_width(s))
+    return fill + s if right else s + fill
+
+
+def _verdict(q: dict) -> str:
+    """1区間の判定ラベル。機械判定（check_quality）の結果であって、文字の正しさではない。"""
+    if q.get("flagged"):
+        return "要確認"
+    if q.get("source") == "cache":
+        return "キャッシュ"
+    if q.get("attempts", 1) > 1:
+        return f"回復({q['attempts']}回)"
+    return "合格"
+
+
 def write_quality_report():
-    """文字起こし品質のサマリを表示する（区間ごとの一発合格／回復／要確認）。"""
+    """文字起こし品質のサマリを表示する（全体の総合評価と、区間ごとの明細）。"""
     q = _quality_summary()
     if not q:
         return
     print("\n── 文字起こし品質 ──")
     print(f"  総合評価: {q['grade']}")
     print(f"  区間数 {q['segments']} ／ 一発合格 {q['pass_first_try']} ／ "
-          f"再試行・格上げで回復 {q['recovered']} ／ 要確認 {q['flagged']}")
+          f"再試行・格上げで回復 {q['recovered']} ／ 要確認 {q['flagged']} ／ "
+          f"キャッシュ再利用 {q.get('cached', 0)}")
     if q["chars_per_sec_avg"] is not None:
         print(f"  発話密度 平均 {q['chars_per_sec_avg']} 字/秒"
               f"（最小 {q['chars_per_sec_min']} 字/秒。低いほど途切れの疑い）")
     if q["covered_min"] is not None:
         print(f"  処理カバレッジ 約 {q['covered_min']} 分 ／ 総文字数 {q['total_chars']:,} 字")
+
+    # 区間別の明細。全体の総合評価だけだと、どの区間が薄いのか・どこにトークンを
+    # 使ったのかが分からない。発話密度は区間ごとにばらつき、低い区間が途切れの候補になる。
+    by_chunk = _usage_by_chunk()
+    print("\n  区間別（判定は check_quality による機械判定。**文字の正しさは見ていない**）")
+    print("    " + _pad("区間", 28) + _pad("尺", 8, True) + _pad("文字数", 10, True)
+          + _pad("字/秒", 8, True) + _pad("判定", 12, True) + "   消費")
+    for r in QUALITY_LOG:
+        name = r["chunk"] or "?"
+        short = name if _disp_width(name) <= 27 else "…" + name[-26:]
+        dur = f"{r['duration_sec'] / 60:.1f}分" if r.get("duration_sec") else "—"
+        cps = f"{r['chars_per_sec']}" if r.get("chars_per_sec") else "—"
+        u = by_chunk.get(name)
+        if u:
+            keys = f" [{'→'.join(u['keys'])}]" if u["keys"] else ""
+            spend = f"{u['tokens']:,} tok / {u['sec']:.0f}秒 / {u['calls']}回{keys}"
+        else:
+            spend = "—（API 呼び出しなし）"
+        print("    " + _pad(short, 28) + _pad(dur, 8, True) + _pad(f"{r['chars']:,}", 10, True)
+              + _pad(cps, 8, True) + _pad(_verdict(r), 12, True) + "   " + spend)
+        if r.get("reason"):
+            print(f"      └ {r['reason']}")
     if q["flagged_chunks"]:
         print(f"  ⚠ 要確認区間: {', '.join(q['flagged_chunks'])}")
 
@@ -532,6 +638,92 @@ def _append_cost_log(report: dict, stem: str, out_dir: Path) -> None:
         pass                                  # ログ追記の失敗で本処理を落とさない
 
 
+def _load_key_accounts() -> dict:
+    """ラベル → {account, project, plan} の対応表を読む（無ければ空 dict）。
+
+    キーのラベル（NHO / SAITOLA 等）だけでは、どの Google アカウント・どの Cloud
+    プロジェクトの枠を消費したのかが実行ログから読み取れない。**この対応表は任意**で、
+    無ければラベルと指紋の表示に留める（推測でアカウント名を補完しない）。"""
+    try:
+        data = json.loads(KEY_ACCOUNTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k).lower(): v for k, v in data.items() if isinstance(v, dict)}
+
+
+def _tier_conflicts() -> list:
+    """「無料枠と宣言したキー」が課金キーとして記録されていないかを照合し、矛盾を返す。
+
+    課金状態の実測は 2026-08-08 に廃止し、GEMINI_API_KEY_POOL への記載を無料枠の宣言として
+    扱う運用になった。宣言が誤っていると**黙って実請求が始まる**（レポートは「実請求なし」と
+    表示し続ける）。過去の実測記録が残っている指紋については、ここで食い違いを拾える。"""
+    if _TIER_DECLARED != "free" or not _KEY_FINGERPRINTS:
+        return []
+    try:
+        known = json.loads(KEY_TIER_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for label, fp in _KEY_FINGERPRINTS.items():
+        rec = known.get(fp) or {}
+        if rec.get("tier") == "paid":
+            out.append((label, fp, rec.get("checked", "?")))
+    return out
+
+
+def _key_breakdown() -> dict:
+    """キーのラベル → {calls, tokens} の集計（どの枠をどれだけ食ったか）。"""
+    agg: dict = {}
+    for u in USAGE_LOG:
+        d = agg.setdefault(u.get("key_label") or "?", {"calls": 0, "tokens": 0})
+        d["calls"] += 1
+        d["tokens"] += u.get("total", 0) or 0
+    return agg
+
+
+def write_account_report():
+    """どのアカウント・どのキー・どのプランで実行したかを表示する。
+
+    無料枠は利用規約上、入力と出力を人間のレビュアーが読み得る。**どのアカウントの枠で
+    処理したか**は、後から「この音声をどこに出したか」を辿る唯一の手掛かりになるので、
+    実行のたびに残す。キーの値は表示しない（指紋のみ）。"""
+    accounts = _load_key_accounts()
+    breakdown = _key_breakdown()
+    used_labels = [l for l in breakdown if l and l != "?"]
+    print("\n── 使用したアカウントとプラン ──")
+    if not USAGE_LOG:
+        # 全区間がキャッシュ再利用だった実行。ここでキーを「使用した」ように書くと、
+        # 音声を送っていないのに送ったと読める（無料枠に何を出したかの記録が歪む）。
+        print("  この実行では Gemini API を呼んでいない（全区間がキャッシュ再利用）。"
+              "送信・消費・課金はいずれもゼロ。")
+        print(f"  呼び出しがあれば使われるキー: {_API_KEY_DESC}")
+        return
+    if not used_labels:
+        print(f"  APIキー   {_API_KEY_DESC}")
+    for label in used_labels:
+        fp = _KEY_FINGERPRINTS.get(label, "?")
+        info = accounts.get(label.lower(), {})
+        acct = info.get("account")
+        proj = info.get("project")
+        who = acct or "（アカウント未登録）"
+        tail = f" ／ Cloud プロジェクト {proj}" if proj else ""
+        b = breakdown[label]
+        print(f"  キー［{label}］指紋 {fp}　→　{who}{tail}")
+        print(f"      この実行での消費: {b['calls']}回 / {b['tokens']:,} トークン")
+    if not accounts:
+        print(f"  ※ ラベルとアカウントの対応表が未設定（{KEY_ACCOUNTS_PATH}）。"
+              "作るとこの欄にアカウント名・プロジェクト名が出る。")
+    plan = {"free": "無料枠（Free tier）", "unknown": "不明"}.get(_TIER_DECLARED, _TIER_DECLARED)
+    print(f"  プラン    {plan}")
+    if _TIER_DECLARED == "free":
+        print("            ※ GEMINI_API_KEY_POOL への記載にもとづく**宣言**であって実測ではない。"
+              "キーの Cloud プロジェクトで課金を有効にすると、この表示のまま実請求に変わる。")
+    for label, fp, checked in _tier_conflicts():
+        print(f"  ⚠ キー［{label}］（指紋 {fp}）は課金キーとして記録されている"
+              f"（{KEY_TIER_PATH.name}・{checked} 時点）。無料枠の宣言と矛盾する。"
+              " https://aistudio.google.com/billing で確認すること。")
+
+
 def write_usage_report(out_dir: Path, stem: str):
     """stage 別・モデル別のトークン消費・所要時間・品質を表示し、_usage.json に保存する。"""
     if not USAGE_LOG and not QUALITY_LOG:
@@ -572,6 +764,17 @@ def write_usage_report(out_dir: Path, stem: str):
               "billed_jpy_approx": 0,
               "free_jpy_approx": round(free_usd * 155),  # 無料枠ぶん（請求なし。課金なら相当する額の参考値）
               "api_key": _API_KEY_DESC,   # どのキーで消費したかを後から追えるようにする（値は含まない）
+              # キー別の消費内訳とアカウント。**キーの値は入れない**（ラベル・指紋・
+              # 対応表に登録されたアカウント名だけ）。無料枠は人間のレビュアーが読み得るため、
+              # 「どのアカウントの枠にこの音声を出したか」を成果物側にも残す。
+              "keys_used": [
+                  {"label": lb, "fingerprint": _KEY_FINGERPRINTS.get(lb, "?"),
+                   "account": (_load_key_accounts().get(lb.lower(), {}) or {}).get("account"),
+                   "project": (_load_key_accounts().get(lb.lower(), {}) or {}).get("project"),
+                   **v}
+                  for lb, v in _key_breakdown().items() if lb and lb != "?"],
+              "tier_conflicts": [{"label": lb, "fingerprint": fp, "checked": ck}
+                                 for lb, fp, ck in _tier_conflicts()],
               "no_free_tier_models": billable,
               "elapsed_sec": round(elapsed, 1), "elapsed_human": _fmt_dur(elapsed),
               "api_sec": round(api_sec, 1),
@@ -584,7 +787,12 @@ def write_usage_report(out_dir: Path, stem: str):
     path = out_dir / f"{stem}_usage.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     models_used = sorted({r["model"] for r in rows})
-    print(f"\n── 使用モデル ──\n  {', '.join(models_used)}　／　APIキー: {_API_KEY_DESC}")
+    write_account_report()
+    print("\n── 使用モデル ──")
+    if models_used:
+        print(f"  {', '.join(models_used)}　／　APIキーの経路: {_API_KEY_DESC}")
+    else:
+        print("  （この実行では Gemini を呼んでいない。キャッシュ済みの文字起こしを再利用した）")
     print("\n── トークン消費（Gemini API） ──")
     for r in rows:
         # thinking は出力単価で課金されるので out と足さずに別項目で見せる（混ぜると主因が隠れる）
@@ -962,6 +1170,9 @@ def _upload(client, path: Path):
 
 
 def transcribe_file(client, path: Path, prompt: str, model: str, stage: str = "transcribe") -> str:
+    global _CURRENT_CHUNK, _CURRENT_KEY_LABEL
+    _CURRENT_CHUNK = path.name
+    _CURRENT_KEY_LABEL = client.label() if isinstance(client, KeyPool) else ""
     print(f"  [{model}] {path.name} アップロード中", end="", flush=True)
     f = _upload(client, path)
     print(" → 文字起こし中...", end="", flush=True)
@@ -1067,6 +1278,11 @@ def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
                                     duration_sec=d)
             if ok:                                    # 品質を満たす済チャンクのみ再利用
                 print(f"[{i + 1}/{n}] キャッシュ再利用: {cache.name}")
+                # 再利用した区間も品質ログに残す（API を呼んでいないので attempts=0）。
+                # 残さないと区間別の明細に穴が空き、この実行で取り直した区間だけが
+                # 全体であるかのように読める。
+                _record_quality(chunk.name, d, cached, True, "", 0,
+                                source="cache", key_label=None)
                 parts.append(f"## Part {i + 1} — {chunk.name}\n\n{cached}")
                 continue
             print(f"[{i + 1}/{n}] キャッシュを破棄して取り直し（{why}）")
@@ -1428,6 +1644,9 @@ def main():
 
     key_pool = KeyPool(pool_entries, declared_tier=_TIER_DECLARED)
     _API_KEY_DESC = f"{pool_entries[0][0]}（指紋 {_key_fingerprint(pool_entries[0][1])}）"
+    # ラベル → 指紋。実行後のサマリでアカウント・プランを表示するために保持する（値は持たない）。
+    _KEY_FINGERPRINTS.clear()
+    _KEY_FINGERPRINTS.update({l: _key_fingerprint(k) for l, k in pool_entries})
     labels = "・".join(l for l, _ in pool_entries)
     if _TIER_DECLARED == "free":
         print(f"  キー: {len(pool_entries)}件をプール（{labels}）。枠上限で先頭から順に自動切替")

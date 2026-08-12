@@ -1,0 +1,21 @@
+{
+  "_readme": [
+    "APIキーのラベル → そのキーがどのアカウント・どの Cloud プロジェクトのものかの対応表。",
+    "実行後のサマリ『使用したアカウントとプラン』欄に表示される。任意（無くても動く）。",
+    "置き場所: ~/.config/claude-toolkit/gemini-accounts.json",
+    "キーは GEMINI_API_KEY_<ラベル> の <ラベル> を小文字にしたもの（例: GEMINI_API_KEY_NHO → nho）。",
+    "**APIキーの値は絶対に書かない。** ここに書くのはアカウント名・プロジェクト名だけ。",
+    "無料枠は利用規約上、入力と出力を人間のレビュアーが読み得る。どのアカウントの枠へ",
+    "音声を出したかを後から辿れるようにするための対応表であり、推測で埋めると意味を失う。"
+  ],
+  "nho": {
+    "account": "you@example.org",
+    "project": "gemini-transcribe-nho",
+    "plan": "free"
+  },
+  "saitola": {
+    "account": "you@example.com",
+    "project": "gemini-transcribe-personal",
+    "plan": "free"
+  }
+}

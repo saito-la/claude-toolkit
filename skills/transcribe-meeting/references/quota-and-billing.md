@@ -41,6 +41,45 @@ export GEMINI_API_KEY_POOL="NHO SAITOLA"     # この順に使う
 
 **未設定にしてはいけない**（複数キーがある環境では）。未設定時は `GEMINI_API_KEY_*` を自動検出するフォールバックに落ちるが、その順序は環境変数名のアルファベット順で、しかも `GEMINI_API_KEY`（＝既定キー）が先頭に来る。既定キーが課金キーだと、無料枠に手を付ける前に課金が走る。
 
+## ラベルとアカウントの対応表
+
+ラベル（`NHO` / `SAITOLA` 等）だけでは、実行ログを後から見たときに**どの Google アカウントの枠を消費したか**が分からない。`~/.config/claude-toolkit/gemini-accounts.json` にラベル→アカウントの対応を書くと、実行後のサマリ「使用したアカウントとプラン」欄にアカウント名・Cloud プロジェクト名が出る。ひな型は [`gemini-accounts.example.json`](gemini-accounts.example.json)。
+
+```sh
+cp ~/.claude/skills/transcribe-meeting/references/gemini-accounts.example.json \
+   ~/.config/claude-toolkit/gemini-accounts.json
+# 開いて account / project を実際の値に書き換える
+```
+
+**任意**であり、無ければラベルと指紋（sha256 先頭8桁）だけの表示に留まる。**APIキーの値はこのファイルに書かない**——表示・ログに出せるのは指紋までで、キーの実体は `gemini-keys.env`（権限600・git 外）だけが持つ。
+
+無料枠は利用規約上、入力と出力を人間のレビュアーが読み得る。「この音声をどのアカウントの枠へ出したか」は後から辿れる必要があり、そのための対応表なので**推測で埋めない**（誤った対応表は、追跡できるという誤った安心を与えるだけになる）。
+
+なお、`GEMINI_API_KEY_POOL` に載せたキー（＝無料枠の宣言）が `gemini-key-tier.json` に `paid` として記録されていた場合、実行後のサマリで警告が出る。宣言と実態の食い違いは、レポートが「実請求なし」と表示し続けたまま課金が始まる唯一の経路なので、警告が出たら下記の手順で測るか <https://aistudio.google.com/billing> を直接見る。
+
+**`gemini-key-tier.json` には過去に使ったプール外のキーの記録も残る。** ラベルではなく**指紋で突合する**こと。ラベルが同じでもキーを差し替えれば指紋は変わり、古い記録は別のキーの話になる（2026-08-12 に、プール外の旧キーの `paid` 記録を現行キーのものと読んで誤った警告を出した。現行の2本はいずれも無料枠だった）。
+
+## 課金状態を単発で測る
+
+キーを追加したときや、宣言と記録が食い違ったときの確認手順。**常時実行はしない**（実行ごとのプローブは 2026-08-08 に廃止した。運用をプール＝無料枠キーに限ったので毎回測る意味がなくなったため）。単発の確認手段としては有効なので、手順だけ残す。
+
+無料枠の割当が無いモデル（Pro 系）へ最小リクエストを投げ、返る 429 の quota メトリクスを読む。
+
+```python
+from google import genai
+from google.genai import errors
+c = genai.Client(api_key=KEY)
+try:
+    c.models.generate_content(model="gemini-3.1-pro-preview", contents="hi")
+    print("応答あり → 課金が有効（Tier 1 以上）")
+except errors.ClientError as e:
+    print(e)   # generate_content_free_tier_requests / limit: 0 → 無料枠（課金は無効）
+```
+
+判定の根拠は `generativelanguage.googleapis.com/generate_content_free_tier_requests` の `limit: 0`。**429 は拒否なのでトークンを消費せず、課金キーだった場合の実請求も発生しない**（応答が返った場合のみ最小の課金が生じる）。
+
+対象モデルは固定しない。`gemini-2.5-pro` は「no longer available to new users」で 404 を返し判定に使えなかった（2026-08-12 実測）。`models.list()` で現存する Pro 系を拾ってから投げる。**404 と 429 を混同しないこと**——404 はモデルの提供終了で、キーの課金状態を何も語らない。
+
 ## thinking トークンが課金の主役になる
 
 **Gemini の思考トークン（`thoughts_token_count`）は応答本文（`candidates_token_count`）に含まれないが、出力単価でそのまま課金される。** 本スクリプトは `thinking_config` を指定せずモデル既定に委ねているため、量はモデルによって大きく違う。
