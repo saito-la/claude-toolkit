@@ -26,6 +26,7 @@
   conventions/*.md               → ~/.claude/conventions/
   guides/*.md                    → ~/.claude/
   instructions/*.md              → ~/.claude/instructions/
+  scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
 
 `instructions/` は置くだけでは読まれない。~/.claude/CLAUDE.md に `@instructions/<名前>`
@@ -250,6 +251,34 @@ def place_statusline(root: Path, mode: str, plan: Plan, dry: bool, quiet: bool) 
     return True
 
 
+def place_scripts(root: Path, mode: str, plan: Plan, dry: bool, quiet: bool):
+    """規約が名指しで呼ぶスクリプトを ~/.claude/scripts/ へ置く。
+
+    規約側（conventions/action-items-convention.md 等）が実行コマンドを書いている
+    以上、その実体が届いていなければ手順が空振りする。実際 archive-action-items.py
+    はどの端末にも無く、完了項目の退避が全リポジトリで手作業になっていた。
+    """
+    src_dir = root / "scripts"
+    if not src_dir.is_dir():
+        return
+    dest_dir = CLAUDE / "scripts"
+    if not dry:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+    for src in sorted(src_dir.glob("*.py")):
+        rel = f"scripts/{src.name}"
+        if dry:
+            plan.record(rel, (CLAUDE / rel).exists())
+            continue
+        try:
+            plan.record(rel, _place(src, dest_dir / src.name, mode))
+        except OSError as e:
+            plan.failed.append(rel)
+            log(f"⚠️  {src.name} の配置に失敗しました（スキップして続行）: {e}", quiet)
+            continue
+        if mode == "copy" and platform.system() != "Windows":
+            (dest_dir / src.name).chmod(0o755)
+
+
 def _is_ours(dest: Path, prev_mode: str, roots) -> bool:
     """撤去してよいか＝本スクリプトが置いたものが手つかずで残っているか。
 
@@ -469,6 +498,7 @@ def main() -> int:
     plan = Plan()
     place_skills(root, a.mode, plan, a.dry_run, a.quiet)
     place_md_dirs(root, a.mode, plan, a.dry_run, a.quiet)
+    place_scripts(root, a.mode, plan, a.dry_run, a.quiet)
     has_sl = place_statusline(root, a.mode, plan, a.dry_run, a.quiet)
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
@@ -488,6 +518,9 @@ def main() -> int:
     print(f"  ~/.claude/conventions/   {sum(1 for r in plan.placed if r.startswith('conventions/'))} 件（作業種別ごとの規約）")
     print(f"  ~/.claude/               {sum(1 for r in plan.placed if '/' not in r and r != 'statusline.py')} 件（参照文書 SESSION-END.md 等）")
     print(f"  ~/.claude/instructions/  {sum(1 for r in plan.placed if r.startswith('instructions/'))} 件（グローバル指示の断片）")
+    n_scripts = sum(1 for r in plan.placed if r.startswith("scripts/"))
+    if n_scripts:
+        print(f"  ~/.claude/scripts/       {n_scripts} 件（規約が呼ぶスクリプト）")
     if has_sl:
         print("  ~/.claude/statusline.py")
 
