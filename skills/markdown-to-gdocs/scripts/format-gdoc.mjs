@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * Google Docs 整形ツール（体裁プリセット適用）
- * Usage: node format-gdoc.mjs <docId> [--inspect] [--raw] [--account <name>] [--preset <name>]
+ * Usage: node format-gdoc.mjs <docId> [--inspect] [--raw] [--account <name>] [--preset <name>] [--margin <cm>]
  *
  * --inspect : 変更せず、先頭段落のスタイル（namedStyle/罫線/網掛け）と余白を表示
+ * --margin  : プリセットの余白(cm)だけを上書きする。余白違いのプリセットを増やさずに済ませるため
  * 通常      : プリセットに従い 余白・フォント・サイズ・行間・タイトル/サブタイトル・見出しレベルを一括適用
  * 既存の drive.file トークン(.gdrive-credentials-<account>-rw.json)を流用（既定account: default）。
  */
@@ -31,14 +32,19 @@ const presetIdx = process.argv.indexOf('--preset');
 const PRESET_NAME = presetIdx !== -1 ? process.argv[presetIdx + 1] : 'formal-ja';
 const PRESET = PRESETS[PRESET_NAME];
 
-if (!DOC_ID) { console.error('Usage: node format-gdoc.mjs <docId> [--inspect] [--account <name>] [--preset <name>]'); process.exit(1); }
+if (!DOC_ID) { console.error('Usage: node format-gdoc.mjs <docId> [--inspect] [--account <name>] [--preset <name>] [--margin <cm>]'); process.exit(1); }
 if (!PRESET) { console.error(`未知のpreset: ${PRESET_NAME}（利用可能: ${Object.keys(PRESETS).join(', ')}）`); process.exit(1); }
+
+// 余白はプリセット値を既定とし、--margin があればそれだけを上書きする
+const marginIdx = process.argv.indexOf('--margin');
+const MARGIN_CM = marginIdx !== -1 ? Number(process.argv[marginIdx + 1]) : PRESET.marginCm;
+if (!Number.isFinite(MARGIN_CM) || MARGIN_CM < 0) { console.error(`--margin には0以上の数値(cm)を指定してください: ${process.argv[marginIdx + 1]}`); process.exit(1); }
 
 // Windows では HOME が未設定のことが多いため USERPROFILE をフォールバックにする
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const CREDS = `${HOME}/.config/gdrive-mcp/.gdrive-credentials-${ACCOUNT}-rw.json`;
 const OAUTH = `${HOME}/.config/gdrive-mcp/credentials.json`;
-const MARGIN_PT = PRESET.marginCm * CM_PER_PT;
+const MARGIN_PT = MARGIN_CM * CM_PER_PT;
 
 async function token() {
   const oauth = JSON.parse(readFileSync(OAUTH, 'utf8')).installed;
@@ -140,5 +146,5 @@ paras.forEach((p, i) => {
 });
 
 await batch(tok, requests);
-console.log(`\n✅ 整形適用（preset: ${PRESET_NAME}）: 余白${PRESET.marginCm}cm / 全文${PRESET.fontFamily} / 罫線・網掛け除去 / タイトル・サブタイトル設定`);
+console.log(`\n✅ 整形適用（preset: ${PRESET_NAME}）: 余白${MARGIN_CM}cm / 全文${PRESET.fontFamily} / 罫線・網掛け除去 / タイトル・サブタイトル設定`);
 console.log(`   https://docs.google.com/document/d/${DOC_ID}/edit`);
