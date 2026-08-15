@@ -21,10 +21,12 @@
   ```bash
   TX=$(ls -t ~/.claude/projects/"$(pwd | sed 's#/#-#g')"/*.jsonl 2>/dev/null | head -1)
   jq -r 'select(.type=="assistant").message.content[]?|select(.type=="tool_use" and (.name=="Write" or .name=="Edit"))|.name+"  "+.input.file_path' "$TX" | sort -u      # 作成/編集ファイル
+  jq -r 'select(.type=="assistant").message.content[]?|select(.type=="tool_use" and .name=="Bash")|.input.description' "$TX" | sort -u                                     # Bash 経由の作業
   jq -r 'select(.type=="assistant").message.content[]?|select(.type=="tool_use" and (.name=="WebSearch" or .name=="WebFetch"))|(.input.query // .input.url)' "$TX"      # 調査
   jq -r 'select(.type=="assistant").message.content[]?|select(.type=="tool_use" and .name=="AskUserQuestion")|.input.questions[]?.header' "$TX"                            # 意思決定
   ```
-  抽出結果を**作業ストリーム単位**でまとめ、セッション全期間を網羅する。
+  **`Write`・`Edit` の行だけでは足りない。** `sed -i`・スクリプト実行・`git mv`・インストーラなど Bash 経由の書き換えはファイルパスとして現れないため、Bash 行（`description`）を併せて読む。コマンド文字列そのものはリダイレクトや `2>/dev/null` を拾ってノイズになるので、`description` を使う。
+  抽出結果を**作業ストリーム単位**でまとめ、セッション全期間を網羅する。**書き終えたら `git status --porcelain` と `git log --stat -3` で実際の変更と突き合わせ、ログに挙げた成果物と食い違わないか確認する**（JSONL 側は「やろうとしたこと」、git 側は「実際に残ったもの」で、失敗・巻き戻しがあると両者はずれる）。
 - 内容: 概要・決定事項・**当セッションで作成/更新したファイル**・次回アクション
 - **参照のみのファイルは原則ログに列挙しない**（決定の根拠として必要な場合は本文中で引用するに留める）
 
