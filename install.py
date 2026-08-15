@@ -29,7 +29,7 @@
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
 
 `instructions/` は置くだけでは読まれない。~/.claude/CLAUDE.md に `@instructions/<名前>`
-を足して初めて効く（最後に必要な行を表示する）。
+を足して初めて効く（CLAUDE.md が無ければ作る。あれば書き換えず、足りない行を表示する）。
 
 使い方:
   python3 install.py [オプション]
@@ -391,6 +391,40 @@ def ensure_statusline_setting(dry: bool, quiet: bool):
     log(f"✅ settings.json の statusLine を{action}しました", quiet)
 
 
+def ensure_claude_md(inst, dry: bool):
+    """instructions/ を読ませる @行を ~/.claude/CLAUDE.md に用意する。
+
+    無ければ作る。あれば書き換えず、足りない行だけを表示する。既存の CLAUDE.md は
+    各自が育てているファイルで、行の順序や前後の文脈に意味があるため自動で触らない。
+
+    従来は初回のみ「次を足してください」と案内していた。しかし CLAUDE.md が無くても
+    配線の記録さえあれば2回目以降は何も出ないため、**一度案内を見送った端末では
+    instructions/ が永久に読まれないまま**になっていた（2026-08-15 に確認）。
+    案内を毎回出すのではなく、実際に足りないときだけ出す形にする。
+    """
+    path = CLAUDE / "CLAUDE.md"
+    want = [f"@instructions/{md.name}" for md in inst]
+
+    if not path.exists():
+        if dry:
+            print()
+            print(f"（dry-run）{path} を作成し、@行を {len(want)} 件書きます")
+            return
+        path.write_text("\n".join(want) + "\n", encoding="utf-8")
+        print()
+        print(f"✅ ~/.claude/CLAUDE.md を作成しました（@行 {len(want)} 件）")
+        return
+
+    body = path.read_text(encoding="utf-8", errors="replace")
+    missing = [line for line in want if line not in body]
+    if not missing:
+        return
+    print()
+    print("instructions/ は置くだけでは読まれません。~/.claude/CLAUDE.md に次を足してください:")
+    for line in missing:
+        print(f"  {line}")
+
+
 # --- エントリポイント -----------------------------------------------------
 
 def main() -> int:
@@ -453,11 +487,8 @@ def main() -> int:
 
     inst = sorted((root / "instructions").glob("*.md")) if (root / "instructions").is_dir() else []
     inst = [m for m in inst if m.name != "README.md"]
-    if inst and first:
-        print()
-        print("instructions/ は置くだけでは読まれません。~/.claude/CLAUDE.md に次を足してください:")
-        for md in inst:
-            print(f"  @instructions/{md.name}")
+    if inst:
+        ensure_claude_md(inst, a.dry_run)
 
     if plan.failed:
         print()
