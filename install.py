@@ -52,6 +52,23 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# --- 出力エンコーディング -------------------------------------------------
+#
+# 本スクリプトの出力は絵文字と日本語を含む。Windows の Python は、出力先が
+# コンソールなら UTF-16 で直接書くが、**パイプ・リダイレクトのときは locale の
+# エンコーディング（日本語環境では cp932）を使う。** cp932 に絵文字は無いので
+# `UnicodeEncodeError` で異常終了する——settings.json への書き込みは済んでいるのに
+# `.wired-by` の記録前に落ちるため、次回の撤去判定まで壊れる。
+#
+# 対話実行では起きず、インストーラを別スクリプトや Claude Code から呼んだときだけ
+# 表面化する（2026-08-02・08-15・08-16 に NMC-RINKEN15 で再現）。呼び出し側に
+# PYTHONIOENCODING=utf-8 を要求すると、直接実行する経路で必ず忘れる。ここで寄せる。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass  # 3.6 以前や差し替えられたストリームでは諦める（配置自体は続ける）
+
 CLAUDE = Path.home() / ".claude"
 MARKER = CLAUDE / ".wired-by"
 
