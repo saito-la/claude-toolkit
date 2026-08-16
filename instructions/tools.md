@@ -4,7 +4,7 @@ Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わ
 
 ## 探索コマンドの実行証拠
 
-**探索を `timeout` で包まない。** macOS に `timeout` は無く、GNU coreutils を入れても入るのは `gtimeout` である。`timeout 30 grep -ril ... 2>/dev/null` と書くとコマンドは実行されないまま空の出力を返し、`2>/dev/null` が `command not found` を捨てるため、**0件のヒットと区別が付かない**。実際にこれで「記載なし」と誤報告した（2026-08-16）。
+**探索を `timeout` で包まない。** macOS 標準に `timeout` は無い（GNU coreutils を入れれば `timeout`・`gtimeout` の両方が入るが、brew を使えない端末があり、あることを前提にできない）。`timeout 30 grep -ril ... 2>/dev/null` と書くとコマンドは実行されないまま空の出力を返し、`2>/dev/null` が `command not found` を捨てるため、**0件のヒットと区別が付かない**。実際にこれで「記載なし」と誤報告した（2026-08-16）。時間制限が要るなら Bash ツールの `timeout` パラメータを使う。
 
 **「無い」「ヒットしない」と報告する前に、その検索が実行された肯定的証拠を取る。** 終了コード、`grep -c` の件数、走査対象のファイル数など。ラッパーの不在は本体の不在と違い、コマンドの意味を変えずに実行そのものを消すため、空の出力は0件の証拠にならない。
 
