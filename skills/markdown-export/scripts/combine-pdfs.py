@@ -113,7 +113,9 @@ def build_cover_md(title: str, subtitle: str | None, author: str | None, date: s
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="複数mdをPDF化し、表紙・目次・しおり・通しページ番号付きで結合する")
-    ap.add_argument("inputs", nargs="+", help="結合するmdファイル（この順で結合される）")
+    ap.add_argument("inputs", nargs="+", help="結合するmd/PDFファイル（この順で結合される）。PDFはそのまま取り込む")
+    ap.add_argument("--titles", nargs="*", default=None,
+                    help="各パートの目次・しおり用タイトル（入力と同順・同数）。mdはH1、PDFはファイル名が既定")
     ap.add_argument("-o", "--output", required=True, help="出力PDFパス")
     ap.add_argument("--title", required=True, help="表紙の主題名")
     ap.add_argument("--subtitle", default=None, help="表紙の副題（分冊名等）")
@@ -140,11 +142,21 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
-        titles = [get_h1(p) for p in md_paths]
+        if args.titles:
+            if len(args.titles) != len(md_paths):
+                print(f"ERROR: --titles は入力と同数にする（入力{len(md_paths)}件, titles{len(args.titles)}件）",
+                      file=sys.stderr)
+                sys.exit(1)
+            titles = list(args.titles)
+        else:
+            titles = [p.stem if p.suffix.lower() == ".pdf" else get_h1(p) for p in md_paths]
 
-        # 1. 各パートをページ番号なしでPDF化
+        # 1. 各パートをページ番号なしでPDF化（PDF入力はそのまま使う）
         part_pdfs = []
         for i, p in enumerate(md_paths, start=1):
+            if p.suffix.lower() == ".pdf":
+                part_pdfs.append(p)
+                continue
             out_pdf = td / f"part-{i}.pdf"
             render_md(p, out_pdf, style)
             rewrite_named_links(out_pdf)  # 結合前に内部アンカーリンクを変換（失われるのを防ぐ）
