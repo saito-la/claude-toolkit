@@ -49,6 +49,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -471,6 +472,47 @@ def ensure_claude_md(inst, dry: bool):
         print(f"  {line}")
 
 
+# --- git の設定 -----------------------------------------------------------
+
+def ensure_git_default_branch(name: str, dry: bool, quiet: bool):
+    """`git init` が作る最初のブランチ名を global 設定で固定する。
+
+    Git の組み込み既定は今も master で、Git for Windows のインストーラは system の
+    gitconfig へ master を書く。一方 GitHub は 2020-10 以降、GitHub 上で作った
+    リポジトリの既定を main にした。この食い違いが続いているため、設定しない端末で
+    `git init` したリポジトリだけが master になり、名前が端末ごとに割れる。
+
+    割れても手元では何も起きない。表面化するのはブランチ名を書いた URL
+    （.../blob/main/...）が別のリポジトリに対して 404 を返すときで、作った本人が
+    気づく機会が無い。1行の設定で恒久的に止まるので配線に含める。
+
+    **既に global へ別の値が入っているときは上書きしない。** 意図して選んだ値であり、
+    system より global が優先される以上、こちらが勝手に変えると本人の選択が消える。
+    """
+    if shutil.which("git") is None:
+        log("ℹ️  git が見つからないため init.defaultBranch は設定しません", quiet)
+        return
+
+    def _git(*args):
+        return subprocess.run(["git", *args], capture_output=True, text=True)
+
+    cur = _git("config", "--global", "--get", "init.defaultBranch").stdout.strip()
+    if cur == name:
+        log(f"ℹ️  git の init.defaultBranch は既に {name} です", quiet)
+        return
+    if cur:
+        log(f"ℹ️  git の init.defaultBranch は {cur} が設定済みのため変更しません", quiet)
+        return
+    if dry:
+        log(f"（dry-run）git の init.defaultBranch を {name} に設定します", quiet)
+        return
+    r = _git("config", "--global", "init.defaultBranch", name)
+    if r.returncode != 0:
+        log(f"⚠️  git の init.defaultBranch を設定できませんでした: {r.stderr.strip()}", quiet)
+        return
+    log(f"✅ git の init.defaultBranch を {name} に設定しました", quiet)
+
+
 # --- エントリポイント -----------------------------------------------------
 
 def main() -> int:
@@ -480,6 +522,8 @@ def main() -> int:
     p.add_argument("--mode", choices=("symlink", "copy"), default=default_mode)
     p.add_argument("--label", default="claude-toolkit/install.py")
     p.add_argument("--no-settings", action="store_true")
+    p.add_argument("--git-default-branch", metavar="NAME",
+                   help="git の init.defaultBranch を NAME にする（未指定なら触らない）")
     p.add_argument("--force", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--quiet", action="store_true")
@@ -503,6 +547,8 @@ def main() -> int:
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
         ensure_statusline_setting(a.dry_run, a.quiet)
+    if a.git_default_branch:
+        ensure_git_default_branch(a.git_default_branch, a.dry_run, a.quiet)
 
     if not a.dry_run:
         write_marker(root, a.label, a.mode, plan.placed)

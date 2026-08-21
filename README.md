@@ -89,7 +89,11 @@ symlink 配置なら中身の更新は `git pull` だけで反映される（再
 python3 vendor/claude-toolkit/install.py --label "<配布元の名前>"
 ```
 
-主なオプションは `--root`（配布元。既定は本スクリプトの位置）・`--mode symlink|copy`・`--no-settings`（呼び出し側が `settings.json` を管理する場合）・`--force`・`--dry-run`。
+主なオプションは `--root`（配布元。既定は本スクリプトの位置）・`--mode symlink|copy`・`--no-settings`（呼び出し側が `settings.json` を管理する場合）・`--force`・`--dry-run`・`--git-default-branch NAME`。
+
+`--git-default-branch NAME` は `git config --global init.defaultBranch NAME` を当てる。指定しなければ git には触らない。既に global へ別の値が入っているときは上書きせず、その旨だけ出す。
+
+`git init` が作る最初のブランチ名は、Git の組み込み既定と Git for Windows のインストーラがどちらも `master`、GitHub 上で作ったリポジトリは 2020-10 以降 `main` で、5年ぶん食い違ったままになっている。設定しない端末があると、そこで `git init` したリポジトリだけ名前が変わる。手元では何も起きず、ブランチ名を書いた URL が別のリポジトリに対して 404 を返して初めて表面化する。
 
 1台のマシンに配布元が複数ある場合（正本 clone と、配布リポジトリの submodule が同居する場合）、**後から走った別の配布元による上書きは中止される。** 参照先が配布用スナップショットへ倒れると、正本を編集しても submodule を bump するまで反映されなくなるため。意図した切り替えなら `--force`、動作確認なら `HOME=$(mktemp -d) python3 install.py` でホームを分ける。
 
