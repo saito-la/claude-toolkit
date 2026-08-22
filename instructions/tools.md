@@ -16,6 +16,10 @@ Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わ
 
 GAS・clasp・Apps Script への言及時、または `gas/` ディレクトリ操作時は `~/.claude/GAS-CLASP.md` を読むこと（Spreadsheet 書き込み方針を含む）。
 
+## SAS
+
+SAS・`.sas` ファイル・SAS ログへの言及時、または実行の可否を問われたときは `~/.claude/SAS.md` を読むこと。SAS に macOS ネイティブ版は無いが、リモート実行の経路が張ってあることがあるため、`which sas` が空なことを根拠に「使えない」と答えない。
+
 ## Google Sheets 関数
 
 Google Sheets の数式（QUERY・ARRAYFORMULA・LAMBDA等）作成・デバッグ時は、既知の落とし穴があれば自分の環境ドキュメント（無ければ適宜作成）を確認する。新しい落とし穴・パターンを解決したら追記して蓄積する。
