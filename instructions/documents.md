@@ -3,6 +3,7 @@
 - markdown → docx / PDF は **`markdown-export` スキル経由**。pandoc を直接呼ばない。
 - md の印刷を頼まれたら生 md を渡さず、PDF 化してから印刷する。
 - **相手が編集する可能性がある添付は docx で渡す**（PDF にしない）。事務方・共同編集者へ回す起案文書・仕様書・証明書・契約書案などが該当する。読ませるだけの資料は PDF でよい。元が Google Docs なら Drive API の docx エクスポートで体裁ごと渡す。
+- **CSV は BOM 付き UTF-8 で書き出す**（既定）。BOM 無しだと Excel・Numbers が Shift-JIS として読み、日本語が文字化けする。ファイル自体は壊れていないので `file -I` では気づけない。プログラムが読む中間ファイルなど BOM が邪魔になる用途だけ例外にする。
 - md の Google Docs 化は **`markdown-to-gdocs` スキルの3段パイプライン**。**docx を Drive へ直アップロード（`files.create`/`files.update` media）すると体裁が崩れる**（禁止）。内容変更時は3段を再実行して新Docを作り、旧Docは Drive API でゴミ箱へ。
 
 ## 会話の記録・保存
