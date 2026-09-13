@@ -1,0 +1,17 @@
+{
+  "name": "dropbox-mcp-local",
+  "version": "1.0.0",
+  "private": true,
+  "description": "自前実装の Dropbox MCP サーバー。ダウンロードはローカルディスクへ直接ストリーム保存し、会話コンテキストにはパスとメタデータのみ返す（@fm-phibia/dropbox-mcp のバイナリ破損バグの置き換え）。詳細は README.md。",
+  "type": "module",
+  "main": "./index.mjs",
+  "bin": {
+    "dropbox-mcp-local": "./index.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
