@@ -1,3 +1,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# npm の依存。tools/dropbox-mcp は各端末で npm install する（package-lock.json が正本）。
+# 除外しないと 3,618 ファイルが未追跡で出続け、commit に紛れ込む。
+node_modules/

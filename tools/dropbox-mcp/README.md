@@ -25,6 +25,8 @@ cd ~/Projects/claude-toolkit/tools/dropbox-mcp
 npm install --omit=dev
 ```
 
+**claude-toolkit の置き場は端末で2形式ある。** 上は直 clone した端末のパスで、**配布パッケージ方式の端末では `~/Projects/saito-la/claude/vendor/claude-toolkit/tools/dropbox-mcp`** になる（判定は `akiko-office` の `docs/bootstrap.md`）。以下の `npm install` と `claude mcp add` のパスは、その端末の実際の配置へ読み替えること。
+
 ### Dropbox App の準備
 
 アカウントごとに1回、対象の Dropbox アカウントでログインした状態で https://www.dropbox.com/developers/apps を開き、App を新規作成して **App key** と **App secret** を発行する。発行したキーは 1Password 等の秘匿ストアへ保存し、リポジトリ・チャット・メールには置かない（`secret-handling.md` の作業規約に従う）。
@@ -46,13 +48,27 @@ claude mcp add dropbox-<用途や本人を示すラベル> \
 
 ### 認可
 
-初回のみ、MCP 登録後にそのセッションから次の2ツールを順に呼ぶ。
+初回のみ、次の2ツールを順に呼ぶ。**ただし MCP ツールは登録した当のセッションからは呼べない**（反映は次のセッションから）ので、登録した直後に済ませたいなら下の「セッションを開き直さずに認可する」を使う。
 
 1. `dropbox_auth_get_url` — 認可URLを取得（`openBrowser: true` でこの端末のブラウザを自動で開く）
 2. ブラウザで対象アカウントとして認可し、表示された code をコピー
 3. `dropbox_auth_exchange_code`（`authCode: <code>`）— refresh token を取得し、既定で `DROPBOX_TOKEN_FILE` へ保存する
 
 以後はそのトークンファイルが使われ、再認可は不要（トークンファイルを新規端末へコピーする場合も再認可は要らない）。
+
+### セッションを開き直さずに認可する
+
+登録した直後のセッションで済ませたいときは、Dropbox の OAuth を直接叩く。やることは上の3手順と同じで、MCP を経由しないだけである。
+
+認可 URL は次の形。**`token_access_type=offline` を落とすと refresh token が返らず、アクセストークンの期限切れごとに認可し直すことになる。**
+
+```
+https://www.dropbox.com/oauth2/authorize?client_id=<App_key>&response_type=code&token_access_type=offline
+```
+
+ブラウザで対象アカウントとして認可すると code が表示されるので、`https://api.dropboxapi.com/oauth2/token` へ `grant_type=authorization_code` と `code` を POST する（認証は App key/secret の Basic）。返る `refresh_token` を `{"refresh_token": "..."}` の形で `DROPBOX_TOKEN_FILE` へ書き、権限を 600 にする。
+
+**応答の `scope` を確認する。** 読み取りだけで足りる用途なら `account_info.read files.content.read files.metadata.read` になっているはず。書き込み権限が入っていたら、App の Permissions を絞って認可し直す。
 
 ## 動作確認
 
