@@ -24,6 +24,7 @@
 
 - コピペ前提のテキスト（メール文案・チャット文面・URL・コマンド等） → `copy-paste-output-format.md`
 - 生きた文書（`overview.md` 等）・md 見出し規約の詳細 → `living-doc-structure.md`
+- 工程・区間・段階・章などの採番（1から始める・0番を作らない） → `numbering-starts-at-one.md`
 - スプレッドシート設計 → `spreadsheet-structure.md`
 - 手順書・マニュアル → `sop-manual-authoring.md`
 - ファイル・フォルダの命名／整理 → `file-naming-and-folder-hygiene.md`
