@@ -2,6 +2,12 @@
 
 Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず Box CLI（`box files:get` / `box files:download`）を使う**。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
 
+## Dropbox へのアクセス
+
+**Dropbox は自前実装の MCP サーバー（`dropbox-personal` 等）だけを使う。「claude.ai Dropbox」（Dash、`mcp__claude_ai_Dropbox__*`）は使わない。** Dash は接続済みと表示されていても、どのツールを呼んでも `missing required resultType` のプロトコルエラーを返して機能しない（2026-09-06 と 2026-09-16 に同じ失敗を確認）。「接続済み＝使える」ではないので、繋がって見えることを根拠に呼ばない。
+
+自前実装の実体は `claude-toolkit` の `tools/dropbox-mcp/`（セットアップと MCP 登録の正本はその README）。繋がらないときに Dash へ迂回せず、まず自前実装側を直す。**移設でパスが変わると `~/.claude.json` に残った旧パスが `CONNECTION_CLOSED` を出す**（2026-09-16 実例。`ai-environment/scripts/dropbox-mcp/` から移したが登録側が旧パスのままだった）。新しい配置で `npm install --omit=dev` を済ませ、登録のパスを直す。
+
 ## 探索コマンドの実行証拠
 
 **探索を `timeout` で包まない。** macOS 標準に `timeout` は無い（GNU coreutils を入れれば `timeout`・`gtimeout` の両方が入るが、brew を使えない端末があり、あることを前提にできない）。`timeout 30 grep -ril ... 2>/dev/null` と書くとコマンドは実行されないまま空の出力を返し、`2>/dev/null` が `command not found` を捨てるため、**0件のヒットと区別が付かない**。実際にこれで「記載なし」と誤報告した（2026-08-16）。時間制限が要るなら Bash ツールの `timeout` パラメータを使う。
