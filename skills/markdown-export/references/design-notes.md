@@ -36,7 +36,7 @@
 
 対処：3テンプレートの docGrid を `w:type="default"`（格子なし）へ変えた。gothic は既定の段落に行間1.15を持たせた（MS Pゴシックは格子を外すと行間1.0では詰まりすぎるため）。meiryo の0.85は markdown-to-gdocs の formal-ja と揃えるための値なので変えていない。
 
-**macOS の Quick Look はこの症状を再現しない。** Quick Look は docGrid を無視して描画するため、`qlmanage` で PNG 化した目視確認では行間が正常に見える。行間の確認は Word で開いて行う。
+**macOS の Quick Look はこの症状を再現しない。そもそも docx の仕上がりの判定に使えない。** Quick Look は docGrid を無視して描画するうえ、文書の書体を使わない。テーマで MS Pゴシックを指定した版も、docDefaults で書体名を直接指定した版も、同じ代替の明朝体で描いた（MS Pゴシックは `~/Library/Fonts` に入っているのに使われない）。書体が違えば行の高さと折り返しが変わるので、ページの収まりも判断できない。2026-09-23、Quick Look で1枚に収まって見えた委嘱状が、Word では2ページになった。確認は `scripts/docx-word-check.sh` で Word に数えさせる。同じ docx を Word で測ると2ページ、段落後の余白を詰めた版は1ページで、症状を再現できることを確かめてある。
 
 **表の罫線が透明** — テンプレートの表スタイルの枠線が透明だった。`tblBorders`（濃い灰色 0.75pt）を明示付与した。
 
