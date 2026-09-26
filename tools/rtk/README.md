@@ -24,29 +24,46 @@
 
 `settings.json` を手で編集する必要はない。JSON を壊すと Claude Code が起動しなくなるため、スクリプトを使うこと。
 
+スクリプトの場所は導入の形で違う。`saito-la/claude` 経由なら `~/Projects/saito-la/claude/vendor/claude-toolkit/tools/rtk/remove-rtk.py`、直 clone なら `~/claude-toolkit/tools/rtk/remove-rtk.py`。以下は前者で書く。Windows では `python3` を `py` か `python` に読み替える。
+
 1. 何が残っているかを確認する。何も書き換えない。
 
 ```bash
-python3 ~/claude-toolkit/tools/rtk/remove-rtk.py
+python3 ~/Projects/saito-la/claude/vendor/claude-toolkit/tools/rtk/remove-rtk.py
 ```
 
-2. 「対応は不要」と出れば導入していない。ここで終わり。残っていれば削除を実行する。バックアップを作ってから書き換える。
+2. 「対応は不要」と出れば設定は残っていない。手順3の本体の確認へ進む。残っていれば削除を実行する。バックアップを作ってから書き換える。
 
 ```bash
-python3 ~/claude-toolkit/tools/rtk/remove-rtk.py --apply
+python3 ~/Projects/saito-la/claude/vendor/claude-toolkit/tools/rtk/remove-rtk.py --apply
 ```
 
-3. rtk 本体を削除する。
+3. rtk 本体を削除する。設定が残っていなくても本体だけ残っていることがあるので、必ず確かめる。
+
+Mac：
 
 ```bash
-brew uninstall rtk
+type -a rtk                 # 何も出なければ本体は無い
+brew uninstall rtk          # brew で入れた場合
+rm -f ~/.local/bin/rtk      # curl スクリプトで入れた場合
 ```
 
-curl スクリプトで導入した場合は `~/.local/bin/rtk` を削除する。
+`brew uninstall` が `No such keg` を返すのに `/opt/homebrew/bin/rtk` が見えるときは、brew のパッケージではなく `~/.local/bin/rtk` を指す手作りのリンクである（2026-09-26 に実例）。`ls -l` でリンク先を確かめて消す。データの置き場 `~/Library/Application Support/rtk` も消す。
 
-4. Claude Code を再起動する。
+Windows（PowerShell）：
 
-5. 手順1を再実行し、「対応は不要」と出ることを確認する。
+```powershell
+Get-Command rtk -All -ErrorAction SilentlyContinue   # 何も出なければ本体は無い
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\rtk" -ErrorAction SilentlyContinue
+$p = [Environment]::GetEnvironmentVariable("PATH","User")
+[Environment]::SetEnvironmentVariable("PATH", (($p -split ';') | Where-Object { $_ -and $_ -notmatch '\\rtk\\?$' }) -join ';', "User")
+```
+
+4. プロジェクト側の残りを探す。スクリプトが見るのは `~/.claude/` だけで、`rtk init`（`-g` なし）はプロジェクトの `CLAUDE.md` に `<!-- rtk-instructions -->` 〜 `<!-- /rtk-instructions -->` の塊を書き込む。これが残っていると「全コマンドに `rtk` を付けよ」という指示として読まれる。各リポジトリで `git grep -n -i rtk` を実行し、この塊と、`.claude/settings.local.json` の `Bash(rtk …)` の許可を取り除く。過去の作業ログなど記録として残すものは消さなくてよい。
+
+5. Claude Code を再起動する。
+
+6. 手順1を再実行して「対応は不要」と出ること、手順3の確認コマンドが何も出さないことを確かめる。
 
 スクリプトが触るのは `~/.claude/` の `settings.json`・`settings.local.json`・`CLAUDE.md`・`RTK.md` のみで、rtk に言及するフック・許可設定と `@RTK.md` のインポート行だけを取り除く。他のフック・`model`・`statusLine`・その他の許可設定は保持する。書き換えたファイルは同じディレクトリに `.bak-<日時>` として退避する。何度実行しても同じ結果になる。
 
