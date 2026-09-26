@@ -28,6 +28,9 @@
   instructions/*.md              → ~/.claude/instructions/
   scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
+  llm-wiki-template（clone がある端末のみ）
+                                 → pull、~/.claude/llm-wiki-template と ~/.claude/LLM-WIKI.md を張り直し、
+                                   vault を現行の schema に合わせる（sync_llm_wiki）
 
 `instructions/` は置くだけでは読まれない。~/.claude/CLAUDE.md に `@instructions/<名前>`
 を足して初めて効く（CLAUDE.md が無ければ作る。あれば書き換えず、足りない行を表示する）。
@@ -472,6 +475,89 @@ def ensure_claude_md(inst, dry: bool):
         print(f"  {line}")
 
 
+# --- llm-wiki -------------------------------------------------------------
+#
+# llm-wiki-template（schema・点検スクリプト・vault の移行）は別リポジトリだが、
+# 取り直しをそちらの手順に任せると、pull し忘れた端末が古い運用のまま残る。
+# 2026-09-26、作業ログ log.md の廃止が明子さんの端末に1台も届いていなかった。
+# Windows の LLM-WIKI.md はコピーなので pull しても変わらず、clone の場所も端末で
+# 違うため schema に書いたスクリプトのパスが存在しなかった。
+#
+# そこで、端末が必ず通る本スクリプトで毎回次を行う。clone が無い端末では何もしない。
+#   1. テンプレートを pull
+#   2. ~/.claude/llm-wiki-template を clone の実体への別名として張る（schema はこのパスで書く）
+#   3. ~/.claude/LLM-WIKI.md を他の配布物と同じ方式（symlink / copy）で置き直す
+#   4. テンプレートの scripts/vault-migrate.py で vault を現行の schema に合わせる
+
+WIKI_ALIAS = CLAUDE / "llm-wiki-template"
+WIKI_CANDIDATES = [Path.home() / "Projects" / "llm-wiki-template",
+                   Path.home() / "Projects" / "tosh13" / "llm-wiki-template"]
+
+
+def _find_wiki_template():
+    guide = CLAUDE / "LLM-WIKI.md"
+    cands = []
+    if guide.is_symlink():
+        cands.append(Path(os.path.realpath(guide)).parent.parent)
+    if WIKI_ALIAS.exists():
+        cands.append(Path(os.path.realpath(WIKI_ALIAS)))
+    cands += WIKI_CANDIDATES
+    for c in cands:
+        if (c / "schema" / "LLM-WIKI.md").is_file() and (c / ".git").exists():
+            return c.resolve()
+    return None
+
+
+def _ensure_alias(target: Path) -> bool:
+    """WIKI_ALIAS を target への別名にする。Windows は管理者権限の要らないジャンクション。"""
+    if os.path.realpath(WIKI_ALIAS) == str(target) and WIKI_ALIAS.exists():
+        return False
+    if WIKI_ALIAS.is_symlink() or WIKI_ALIAS.is_file():
+        WIKI_ALIAS.unlink()
+    elif WIKI_ALIAS.is_dir():
+        # ジャンクションは is_symlink() が False を返す。rmdir はリンクだけを外し中身に触らない。
+        # rmtree はジャンクション越しに実体を消しうるので使わない。中身のある実ディレクトリなら失敗して止まる。
+        os.rmdir(WIKI_ALIAS)
+    if platform.system() == "Windows":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(WIKI_ALIAS), str(target)],
+                       check=True, capture_output=True)
+    else:
+        WIKI_ALIAS.symlink_to(target, target_is_directory=True)
+    return True
+
+
+def sync_llm_wiki(mode: str, dry: bool, quiet: bool):
+    tpl = _find_wiki_template()
+    if tpl is None:
+        return
+    if dry:
+        print(f"（dry-run）llm-wiki-template {tpl} を pull し、別名・LLM-WIKI.md・vault を合わせます")
+        return
+    try:
+        r = subprocess.run(["git", "-C", str(tpl), "pull", "--ff-only", "-q"],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            print(f"⚠️  llm-wiki-template の pull に失敗しました（手元の版のまま続けます）: {r.stderr.strip()[:200]}")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"⚠️  llm-wiki-template の pull に失敗しました（手元の版のまま続けます）: {e}")
+    try:
+        if _ensure_alias(tpl):
+            log(f"✅ {WIKI_ALIAS} → {tpl}", quiet)
+    except (OSError, subprocess.CalledProcessError) as e:
+        print(f"⚠️  {WIKI_ALIAS} を張れませんでした: {e}")
+    try:
+        _place(tpl / "schema" / "LLM-WIKI.md", CLAUDE / "LLM-WIKI.md", mode)
+    except OSError as e:
+        print(f"⚠️  ~/.claude/LLM-WIKI.md を置けませんでした: {e}")
+    mig = tpl / "scripts" / "vault-migrate.py"
+    if mig.is_file():
+        r = subprocess.run([sys.executable, str(mig)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        out = (r.stdout + r.stderr).strip()
+        if out:
+            print(out)
+
+
 # --- git の設定 -----------------------------------------------------------
 
 def ensure_git_default_branch(name: str, dry: bool, quiet: bool):
@@ -545,6 +631,7 @@ def main() -> int:
     place_scripts(root, a.mode, plan, a.dry_run, a.quiet)
     has_sl = place_statusline(root, a.mode, plan, a.dry_run, a.quiet)
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
+    sync_llm_wiki(a.mode, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
         ensure_statusline_setting(a.dry_run, a.quiet)
     if a.git_default_branch:
