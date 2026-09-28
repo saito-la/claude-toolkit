@@ -40,7 +40,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）5件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）6件：
 
 | スキル | 内容 |
 |---|---|
@@ -49,6 +49,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [transcribe-meeting](skills/transcribe-meeting/SKILL.md) | 会議録音 → 議事録3点セット（原文・ケバ取り版・凝縮版）自動生成（要・Gemini APIキー） |
 | [mcp-setup](skills/mcp-setup/SKILL.md) | Claude CodeへのMCPサーバー接続・セットアップ手順を案内 |
 | [format-prompt](skills/format-prompt/SKILL.md) | 粗いプロンプトを7ブロックの型に整形 |
+| [rescue-session](skills/rescue-session/SKILL.md) | API Error で続けられなくなったセッションの JSONL から、指示・報告・ツール実行結果を読める Markdown に回収 |
 
 **個別プロジェクト配置**（用途が特定プロジェクトに閉じるため、グローバルには置かない）5件：
 
@@ -66,7 +67,9 @@ git clone <このリポジトリ> ~/claude-toolkit
 python3 ~/claude-toolkit/install.py
 ```
 
-`install.py` が `skills/`・`conventions/`・`guides/`・`instructions/`・`tools/statusline/statusline.py` を `~/.claude/` へ配置し、`settings.json` に `statusLine` を追記する（既に設定済みなら壊さない）。POSIX では symlink、Windows では権限の都合でコピーになる。
+`install.py` が `skills/`・`conventions/`・`guides/`・`instructions/`・`hooks/`・`tools/statusline/statusline.py` を `~/.claude/` へ配置し、`settings.json` に `statusLine` を追記する（既に設定済みなら壊さない）。POSIX では symlink、Windows では権限の都合でコピーになる。
+
+`hooks/` は Google Chat への完了通知と Markdown 見出しの規約検査で、置いただけでは動かない。完了通知は Webhook を設定した端末でだけ `install.py` が `settings.json` に登録し、見出しの検査は各自が登録する。詳細は [hooks/README.md](hooks/README.md)。
 
 配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。`instructions/` だけは置くだけでは読まれず、`~/.claude/CLAUDE.md` に `@instructions/<名前>` を足して初めて効く（必要な行はインストーラが最後に表示する）。
 

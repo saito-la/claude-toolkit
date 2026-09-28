@@ -27,7 +27,10 @@
   guides/*.md                    → ~/.claude/
   instructions/*.md              → ~/.claude/instructions/
   scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
+  hooks/*.sh・hooks/*.py          → ~/.claude/hooks/（完了通知・見出しの検査。hooks/README.md）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
+  settings.json の Stop・UserPromptSubmit
+                                 → Webhook を設定した端末だけ、完了通知が未登録なら追記
   llm-wiki-template（clone がある端末のみ）
                                  → pull、~/.claude/llm-wiki-template と ~/.claude/LLM-WIKI.md を張り直し、
                                    vault を現行の schema に合わせる（sync_llm_wiki）
@@ -262,14 +265,28 @@ def place_scripts(root: Path, mode: str, plan: Plan, dry: bool, quiet: bool):
     以上、その実体が届いていなければ手順が空振りする。実際 archive-action-items.py
     はどの端末にも無く、完了項目の退避が全リポジトリで手作業になっていた。
     """
-    src_dir = root / "scripts"
+    _place_executables(root, "scripts", (".py",), mode, plan, dry, quiet)
+
+
+def place_hooks(root: Path, mode: str, plan: Plan, dry: bool, quiet: bool):
+    """フックのスクリプトを ~/.claude/hooks/ へ置く。
+
+    settings.json は ~/.claude/hooks/<名前> を呼ぶので、置き場所はここで固定になる。
+    以前は配布元が家族向けの非公開リポジトリだけで、そちらを clone していない端末では
+    settings.json の呼び出しが毎回空振りしていた（2026-09-28）。
+    """
+    _place_executables(root, "hooks", (".sh", ".py"), mode, plan, dry, quiet)
+
+
+def _place_executables(root: Path, name: str, suffixes, mode: str, plan: Plan, dry: bool, quiet: bool):
+    src_dir = root / name
     if not src_dir.is_dir():
         return
-    dest_dir = CLAUDE / "scripts"
+    dest_dir = CLAUDE / name
     if not dry:
         dest_dir.mkdir(parents=True, exist_ok=True)
-    for src in sorted(src_dir.glob("*.py")):
-        rel = f"scripts/{src.name}"
+    for src in sorted(p for p in src_dir.iterdir() if p.is_file() and p.suffix in suffixes):
+        rel = f"{name}/{src.name}"
         if dry:
             plan.record(rel, (CLAUDE / rel).exists())
             continue
@@ -439,6 +456,51 @@ def ensure_statusline_setting(dry: bool, quiet: bool):
     settings["statusLine"] = {"type": "command", "command": want}
     path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"✅ settings.json の statusLine を{action}しました", quiet)
+
+
+NOTIFY_ENV = Path.home() / ".config" / "claude-chat-notify" / "webhook.env"
+NOTIFY_HOOKS = [("Stop", "notify-chat.sh"), ("UserPromptSubmit", "notify-chat-start.sh")]
+
+
+def ensure_notify_hooks(dry: bool, quiet: bool):
+    """完了通知のフックを settings.json に登録する（hooks/README.md「登録」）。
+
+    Webhook（NOTIFY_ENV）を置いた端末に限る。置いていない端末ではフックは何もせずに
+    終わるが、登録すると応答のたびにシェルが1本起動するので、使わない人の設定には
+    足さない。既にどこかの仕組みが同じスクリプトを登録していれば触らない——
+    家族向けの配布では、以前から別の手順で同じ呼び出しを登録している。
+    """
+    if not NOTIFY_ENV.is_file():
+        return
+    path = CLAUDE / "settings.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        settings = {}
+    hooks = settings.setdefault("hooks", {})
+
+    added = []
+    for event, script in NOTIFY_HOOKS:
+        groups = hooks.setdefault(event, [])
+        registered = any(
+            f"hooks/{script}" in str(h.get("command", ""))
+            for g in groups if isinstance(g, dict)
+            for h in g.get("hooks", []) if isinstance(h, dict)
+        )
+        if registered:
+            continue
+        # Windows でも Git Bash が実行するので同じ形でよい（家族向けの配布で実績がある）
+        cmd = f"""bash -lc '"$HOME/.claude/hooks/{script}"'"""
+        groups.append({"hooks": [{"type": "command", "command": cmd}]})
+        added.append(event)
+
+    if not added:
+        return
+    if dry:
+        log(f"（dry-run）settings.json の {'・'.join(added)} に完了通知を登録します", quiet)
+        return
+    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"✅ settings.json の {'・'.join(added)} に完了通知を登録しました", quiet)
 
 
 def ensure_claude_md(inst, dry: bool):
@@ -629,11 +691,14 @@ def main() -> int:
     place_skills(root, a.mode, plan, a.dry_run, a.quiet)
     place_md_dirs(root, a.mode, plan, a.dry_run, a.quiet)
     place_scripts(root, a.mode, plan, a.dry_run, a.quiet)
+    place_hooks(root, a.mode, plan, a.dry_run, a.quiet)
     has_sl = place_statusline(root, a.mode, plan, a.dry_run, a.quiet)
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
     sync_llm_wiki(a.mode, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
         ensure_statusline_setting(a.dry_run, a.quiet)
+    if not a.no_settings:
+        ensure_notify_hooks(a.dry_run, a.quiet)
     if a.git_default_branch:
         ensure_git_default_branch(a.git_default_branch, a.dry_run, a.quiet)
 
@@ -654,6 +719,9 @@ def main() -> int:
     n_scripts = sum(1 for r in plan.placed if r.startswith("scripts/"))
     if n_scripts:
         print(f"  ~/.claude/scripts/       {n_scripts} 件（規約が呼ぶスクリプト）")
+    n_hooks = sum(1 for r in plan.placed if r.startswith("hooks/"))
+    if n_hooks:
+        print(f"  ~/.claude/hooks/         {n_hooks} 件（フック。登録は hooks/README.md）")
     if has_sl:
         print("  ~/.claude/statusline.py")
 
