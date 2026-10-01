@@ -80,7 +80,20 @@ def main() -> int:
             if zero_num_re.match(text):
                 zero_offenders.append(heading)
 
+    # 日付2行が H1 見出しより前（ファイルの1行目）にあるものを検出する。
+    # 規約は「H1 見出しの直後に作成日・改訂日の2行」。本文冒頭を1行目と取り違えやすい。
+    date_first = False
+    head = [l for l in content.splitlines() if l.strip()][:8]
+    if head and re.match(r"^(作成日|改訂日)[：:]", head[0].strip()):
+        date_first = any(re.match(r"^#\s", l) for l in head[1:])
+
     msgs = []
+    if date_first:
+        msgs.append(
+            "【日付規約】作成日・改訂日の2行がファイルの1行目に置かれています。"
+            "1行目は H1 見出し（文書の題名）とし、日付の2行はその直後に移してください"
+            "（正本: ~/.claude/instructions/principles.md「文書の日付」）。"
+        )
     if offenders:
         msgs.append(
             "【見出し規約】次の見出しに括弧書き／ヘッジ語が含まれています。"
