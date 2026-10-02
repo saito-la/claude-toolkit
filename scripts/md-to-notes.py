@@ -5,7 +5,7 @@
   md-to-notes.py FILE.md [--split-h2] [--prefix 文字列] [--folder フォルダ名] [--send]
 
 - 既定はプレビュー。ノートごとのプレーンテキストを標準出力に出すだけで、送らない。
-- --send で Notes.app にノートを作る。作成後に読み戻し、文字サイズの反映を確かめて ID を出す。
+- --send で Notes.app にノートを作る。作成先に同じ名前のノートがあれば、新しく作らずに本文を置き換える。作成後に読み戻し、文字サイズの反映を確かめて ID を出す。
 - --split-h2 は H2 の節ごとに1ノートにする（会議ごとに開く用途など）。無ければファイル全体で1ノート。
 - --prefix はノート名の頭に付ける文字列。--folder は作成先のフォルダ（無ければ作る）。
 - H1 と冒頭の「作成日：」「改訂日：」行は落とす。リンクは文字だけ、太字・コードの記号は外す。
@@ -13,7 +13,7 @@
 """
 import argparse, html, os, re, subprocess, sys, tempfile
 
-BODY_PX, HEAD_PX = 28, 34  # Notes 側で本文19px・見出し23px に正規化される（NOTES-SEND.md の実測）
+BODY_PX, HEAD_PX = 19, 23  # 2026-10-02 の実測では Notes が指定の px をそのまま保つ。手順書の承認済みサイズ（本文19px・見出し23px）を直接指定する
 
 
 def inline(s):
@@ -101,11 +101,14 @@ def send(title, body_html, folder):
         q = folder.replace('"', '')
         osa(f'tell application "Notes"\nif not (exists folder "{q}") then make new folder with properties {{name:"{q}"}}\nend tell')
         target = f'folder "{q}"'
+    t = title.replace('"', '')
     nid = osa(f'set theBody to read (POSIX file "{path}") as «class utf8»\n'
-              f'tell application "Notes"\nset n to make new note at {target} with properties {{body:theBody}}\nreturn id of n\nend tell')
+              f'tell application "Notes"\nset hits to notes of {target} whose name is "{t}"\n'
+              f'if (count of hits) > 0 then\nset n to item 1 of hits\nset body of n to theBody\nelse\n'
+              f'set n to make new note at {target} with properties {{body:theBody}}\nend if\nreturn id of n\nend tell')
     os.unlink(path)
     body = osa(f'tell application "Notes" to return body of note id "{nid}"')
-    ok = 'font-size: 19px' in body or 'font-size:19px' in body
+    ok = f'font-size: {BODY_PX}px' in body or f'font-size:{BODY_PX}px' in body
     print(f'CREATED\t{title}\t{nid}\tsize-ok={ok}')
 
 
