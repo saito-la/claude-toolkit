@@ -2,16 +2,17 @@
 """Markdown を Apple Notes のノートにする。手順と文字サイズの根拠は guides/NOTES-SEND.md。
 
 使い方:
-  md-to-notes.py FILE.md [--split-h2] [--prefix 文字列] [--folder フォルダ名] [--send]
+  md-to-notes.py FILE.md [--split-h2] [--prefix 文字列] [--folder フォルダ名] [--send | --diff]
 
 - 既定はプレビュー。ノートごとのプレーンテキストを標準出力に出すだけで、送らない。
 - --send で Notes.app にノートを作る。作成先に同じ名前のノートがあれば、新しく作らずに本文を置き換える。作成後に読み戻し、文字サイズの反映を確かめて ID を出す。
+- --diff は Notes 側の現在の本文と md を比べ、Notes で直された行を差分で出す（md へ取り込む前の確認用。送らない）。
 - --split-h2 は H2 の節ごとに1ノートにする（会議ごとに開く用途など）。無ければファイル全体で1ノート。
 - --prefix はノート名の頭に付ける文字列。--folder は作成先のフォルダ（無ければ作る）。
 - H1 と冒頭の「作成日：」「改訂日：」行は落とす。リンクは文字だけ、太字・コードの記号は外す。
 - 節ごとに分けたときは、Notes の一覧（編集日順）で先頭の節が上に来るよう、末尾の節から作る。
 """
-import argparse, html, os, re, subprocess, sys, tempfile
+import argparse, difflib, html, os, re, subprocess, sys, tempfile
 
 BODY_PX, HEAD_PX = 19, 23  # 2026-10-02 の実測では Notes が指定の px をそのまま保つ。手順書の承認済みサイズ（本文19px・見出し23px）を直接指定する
 
@@ -112,6 +113,17 @@ def send(title, body_html, folder):
     print(f'CREATED\t{title}\t{nid}\tsize-ok={ok}')
 
 
+def notes_lines(title, folder):
+    """Notes の本文を行のリストにする。HTML の div と br を改行とみなす。"""
+    t = title.replace('"', '')
+    target = f'folder "{folder}"' if folder else 'default account'
+    body = osa(f'tell application "Notes"\nset hits to notes of {target} whose name is "{t}"\n'
+               f'if (count of hits) = 0 then return ""\nreturn body of item 1 of hits\nend tell')
+    body = re.sub(r'(?i)<br\s*/?>|</div>', '\n', body)
+    body = html.unescape(re.sub(r'<[^>]+>', '', body)).replace('\xa0', ' ')
+    return [l.strip() for l in body.split('\n') if l.strip()]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('file')
@@ -119,6 +131,7 @@ def main():
     ap.add_argument('--prefix', default='')
     ap.add_argument('--folder', default='')
     ap.add_argument('--send', action='store_true')
+    ap.add_argument('--diff', action='store_true')
     a = ap.parse_args()
     md = open(a.file, encoding='utf-8').read()
     h1 = next((inline(l[2:]) for l in md.splitlines() if l.startswith('# ')), os.path.basename(a.file))
@@ -128,6 +141,15 @@ def main():
         title = (a.prefix + ' ' if a.prefix else '') + (n['title'] or h1)
         blocks = rows_to_blocks(n['rows'])
         built.append((title, blocks))
+    if a.diff:
+        for title, blocks in built:
+            md_lines = [l.strip() for l in to_plain(title, blocks).splitlines() if l.strip()]
+            d = [x for x in difflib.unified_diff(md_lines, notes_lines(title, a.folder), 'md', 'notes', lineterm='', n=0)
+                 if not x.startswith(('---', '+++'))]
+            print(f'== {title}: {sum(1 for x in d if x[:1] in "+-")} 行の差')
+            for x in d:
+                print(x)
+        return
     if not a.send:
         for title, blocks in built:
             print(to_plain(title, blocks))
