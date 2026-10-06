@@ -9,8 +9,10 @@
 // 6) 変更可能URLをブラウザで開く
 // 7) 処理済みメールを "Scheduling" へ移動・既読化
 //
-// Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>] [--only <GmailメッセージID>]
+// Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>] [--only <GmailメッセージID>] [--no-label]
 // --only は inbox 内の該当1通のみを処理する（会話経由の単発依頼向け。省略時は従来通り未処理分を全件処理）。
+// --no-label は処理済みのメールにラベルを付けず、受信トレイから外す（と既読化）だけにする。処理の記録を
+// 呼び出し側が持つとき（受信メールの自動処理から1通ずつ呼ぶなど）に使う。
 //
 // 個人データ（config.json・state.jsonl・logs/）は config ファイルと同じディレクトリに置く。
 // 既定は ~/.config/schedule-reply/config.json（あればそれ、無ければスクリプト同梱の config.json）。
@@ -32,13 +34,14 @@ const USER_CONFIG = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config
 const DEFAULT_CONFIG = existsSync(USER_CONFIG) ? USER_CONFIG : join(HERE, 'config.json');
 
 function parseArgs(argv) {
-  const a = { dryRun: false, send: false, verbose: false, config: DEFAULT_CONFIG, only: null };
+  const a = { dryRun: false, send: false, verbose: false, config: DEFAULT_CONFIG, only: null, noLabel: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--dry-run') a.dryRun = true;
     else if (argv[i] === '--send') a.send = true;
     else if (argv[i] === '--verbose') a.verbose = true;
     else if (argv[i] === '--config') a.config = resolve(argv[++i]);
     else if (argv[i] === '--only') a.only = argv[++i];
+    else if (argv[i] === '--no-label') a.noLabel = true;
   }
   return a;
 }
@@ -154,10 +157,10 @@ async function main() {
       // --- 7) relabel + mark read ---
       let relabeled = false;
       if (!dryRun && cfg.flags?.relabel && canRelabel) {
-        const labelId = await gmail.ensureLabel(cfg.gmail.schedulingLabel);
+        const addLabelIds = args.noLabel ? [] : [await gmail.ensureLabel(cfg.gmail.schedulingLabel)];
         const remove = ['INBOX'];
         if (cfg.flags?.markRead) remove.push('UNREAD');
-        await gmail.modifyMessage(id, { addLabelIds: [labelId], removeLabelIds: remove });
+        await gmail.modifyMessage(id, { addLabelIds, removeLabelIds: remove });
         relabeled = true;
       }
 
