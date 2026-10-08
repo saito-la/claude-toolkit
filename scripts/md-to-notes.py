@@ -49,7 +49,7 @@ def rows_to_blocks(rows):
             if out and out[-1][0] != 'blank':
                 out.append(('blank', ''))
             continue
-        if r.startswith('### ') or r.startswith('## '):
+        if re.match(r'^#{2,6} ', r):  # H4 以下も見出しにする（2026-10-07、#### が本文に残った）
             out.append(('head', inline(r.lstrip('#'))))
         elif re.match(r'^\s*- ', r):
             out.append(('item', '・' + inline(re.sub(r'^\s*- ', '', r))))
