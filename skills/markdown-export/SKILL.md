@@ -15,6 +15,7 @@ python3 $SKILL/scripts/md2pdf.py input.md                   # → PDF（A4・余
 python3 $SKILL/scripts/combine-pdfs.py -o out.pdf --title "..." a.md b.md ...   # 複数mdを1冊に結合
 python3 $SKILL/scripts/deck2pdf.py deck.html                 # → PDF（1スライド=1ページ）
 python3 $SKILL/scripts/deck2pdf.py deck.html --rasterize     # → PDF（画面描画を焼く・崩れない）
+python3 $SKILL/scripts/docx-track-changes.py old.docx new.docx out.docx [著者名]   # 2版の差分を Word の変更履歴にした docx
 ```
 
 - **md2docx**：pandoc変換＋表の列幅自動調整＋表罫線付与。テンプレートは同梱の `templates/reference-meiryo.docx`（全文メイリオ・本文10pt・行間0.85・既定）、`templates/reference-gothic.docx`（全文ゴシック・本文10.5pt）、`templates/reference-default.docx`（游明朝/游ゴシック標準）。meiryo は名前付きスタイル自体にフォント・サイズ・行間を持たせてあり、Google Docs へ変換したあとも既定の書式が保たれる（`markdown-to-gdocs` の `formal-ja` プリセットと同値）。
@@ -40,6 +41,7 @@ NODE_PATH=$(npm root -g) node $SKILL/scripts/deck-shots.cjs deck.html <出力先
 変換先の都合で、md 側で守らないと崩れるものがある。
 
 - **箇条書きの番号ラベルは全角「（1）」を使う。** 半角「(1)」は pandoc がファンシー順序リストと誤認し、Word で空の中黒＋入れ子番号に割れる。
+- **改訂版を渡すとき「前回からの修正点が分かる形」を求められたら `scripts/docx-track-changes.py` で変更履歴付きの docx を作る。** 旧版と新版を同じひな型で docx にしてから渡す。段落の対応付けと文字単位の差分を w:ins / w:del に書き出すので、Word で開くと挿入が下線、削除が吹き出しで見える。Word 自身の比較（AppleScript の `compare`）は -1708 で止まることがある（2026-10-09 実測）。
 - **docx の見た目とページ数は Word で確認する。** `scripts/docx-word-check.sh <file>.docx [out.pdf]` が Word にページ数を数えさせ、PDF を書き出す（PDF は `pdftoppm` で PNG にすれば Read ツールで目視できる）。**Quick Look（`qlmanage`）では確認できない。** 文書の書体を使わず代替の明朝体で描き、文書グリッドも無視するため、行の高さ・折り返し・ページ数が Word と一致しない（2026-09-23、Quick Look で1枚に見えた委嘱状が Word では2ページだった）。プレーンな地の文中心の文書（メール文面等）は段落境界が一見して分からず余白の不具合に気づけないので、特に確認を省かない。
 
 ## 文書固有のスタイル追加
