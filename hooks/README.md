@@ -1,9 +1,9 @@
 # hooks
 
 作成日：2026-09-28
-改訂日：2026-09-28
+改訂日：2026-10-05
 
-Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知と、Markdown 見出しの規約検査を収める。
+Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査を収める。
 
 ## 配置と登録
 
@@ -17,6 +17,7 @@ Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。
 
 - 完了通知：`install.py` が `Stop` と `UserPromptSubmit` に登録する。登録するのは `~/.config/claude-chat-notify/webhook.env` がある端末だけで、`--no-settings` を付けたときと、既に `notify-chat` を呼ぶ登録があるときは足さない。Webhook を使わない人の設定にフックを増やさないための条件なので、`webhook.env` を後から置いたら `install.py` をもう一度実行する
 - 見出しの検査：`install.py` は登録しない。規約を機械で守らせたい範囲に応じて、ユーザーの `settings.json` か、プロジェクトの `.claude/settings.json` に自分で足す（下の「Markdown 見出しの検査」）
+- 送信の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「相手に届く送信の検査」）
 
 ## Google Chat への完了通知
 
@@ -118,4 +119,43 @@ python3 <claude-toolkit>/install.py      # webhook.env を置いたので、こ�
 
 ```json
 "command": "f=\"$HOME/.claude/hooks/md-heading-convention.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\""
+```
+
+## 相手に届く送信の検査
+
+### 検査する内容
+
+`outbound-send-guard.py` は `PreToolUse`（`Bash`）で呼ぶ。コマンド文字列と、コマンドが実行するスクリプトファイル（`.py`・`.mjs`・`.js`・`.cjs`・`.ts`・`.sh`・`.rb`）の中身に次が含まれていれば、`permissionDecision` を `ask` にして返す。自動許可の設定や auto mode の下でも確認の画面が出て、送るかどうかをユーザーが決める。
+
+- Google Calendar の招待・変更の通知（`sendUpdates` が `all`・`externalOnly`、旧来の `sendNotifications=true`）
+- Gmail の送信（`/messages/send`・`/drafts/send`、クライアントライブラリの `.send(`）
+- Slack への投稿（`chat.postMessage`）
+
+送信を含まない Calendar・Gmail の操作（`sendUpdates=none`、下書きの作成・更新・削除）は通す。原則は `instructions/principles.md` の「相手に届く操作は、送ることを明示されたときだけ行う」。
+
+### 経緯
+
+2026-10-05、「カレンダー招待を作る」という提案への承認を送信の承認と取り違え、Calendar API を `sendUpdates=all` で呼んで社外の演者と関係者へ招待を送った。Calendar の MCP は通知を付けずに作るので、送信が起きるのは Calendar・Gmail の API を Bash から直接呼ぶ経路で、そこには確認の関門が無かった。指示だけでは同じ取り違えを防げないため、送信の直前で機械的に止める。
+
+### 限界
+
+検査は文字列の照合なので、送信の指定を変数で組み立てたり、別ファイルから読み込んだりすると見逃す。スクリプトを書く段階（ヒアドキュメントでファイルに書くコマンド）でも、文字列が含まれていれば確認が出る。
+
+### 登録
+
+`install.py` は登録しない。全プロジェクトに効かせるため、ユーザーの `~/.claude/settings.json` に足す。`PreToolUse` で `python3` が終了コード 2 を返すとすべての Bash が止まるので、スクリプトの存在を確かめてから呼ぶ。
+
+```json
+"PreToolUse": [
+  {
+    "matcher": "Bash",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "f=\"$HOME/.claude/hooks/outbound-send-guard.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"",
+        "statusMessage": "送信の検査"
+      }
+    ]
+  }
+]
 ```
