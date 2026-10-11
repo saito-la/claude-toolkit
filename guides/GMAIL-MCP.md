@@ -55,7 +55,8 @@ larger:1M -from:notification@github.com
 主な演算子：
 - `from:` `to:` `cc:` `subject:`
 - `after:YYYY/MM/DD` `before:YYYY/MM/DD` `older_than:7d` `newer_than:1m`
-  - **注意**: `after:`/`before:` は境界日を含まない（排他的）。当日のメールを検索するには1日前を指定する（例: 今日=2026/07/01 なら `after:2026/06/30`）。当日を確実に含めたい場合は `newer_than:1d` を使う方が確実。
+  - **注意**: `after:` は境界日を含み、`before:` は含まない。7月分なら `after:2026/07/01 before:2026/08/01`、今日以降なら `after:<今日>` と書く。1日前を指定すると前日のメールまで拾う（2026-10-11 実測：`after:2026/10/10` は10/10のメールを返し、`before:2026/10/10` は返さなかった。以前は「両方とも含まない」と書いており、これに従った返事待ちの検知が、照会の前日に届いた受領連絡を返事と数えた）
+  - 日付の区切りはアカウントのタイムゾーンで決まる。日本時間の境界を厳密に切りたいときは UNIX 秒で `after:1791644400`（2026-10-11 00:00 JST）のように書く
 - `has:attachment` `filename:pdf` `larger:1M`
 - `label:` `is:unread` `is:starred` `in:inbox` `in:sent`
 - `"完全一致フレーズ"` `OR` `-除外語`
