@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import subprocess
+import re
 import sys
 import unicodedata
 from pathlib import Path
@@ -149,6 +150,37 @@ def auto_adjust_tables(docx_path: Path, page_numbers: bool = False, fit_title: b
     doc.save(str(docx_path))
 
 
+DATE_LINE = re.compile(r"^(作成日|改訂日)[：:]")
+
+
+def move_leading_dates(md: str) -> str:
+    """先頭の「作成日：」「改訂日：」行を、タイトル（# 見出し）とサブタイトルの後ろへ移す。
+
+    日付を本文冒頭の2行に書く規約の md をそのまま変換すると、日付が文書の先頭段落になり、
+    Google Docs の整形（format-gdoc.mjs）で日付がタイトルに、本来のタイトルが見出しになる。
+    タイトルの直後から最初の ## 見出しまでの段落はサブタイトルとして扱われるので、日付はその末尾に置く。
+    日付は1行ずつ別の段落にする（改行だけで続けると pandoc が1段落に結合する）。
+    """
+    lines = md.split("\n")
+    i = 0
+    dates = []
+    while i < len(lines) and (not lines[i].strip() or DATE_LINE.match(lines[i].strip())):
+        if lines[i].strip():
+            dates.append(lines[i].strip())
+        i += 1
+    if not dates or i >= len(lines) or not lines[i].startswith("# "):
+        return md
+    title = lines[i]
+    j = i + 1
+    while j < len(lines) and not lines[j].startswith("#"):
+        j += 1
+    sub = "\n".join(lines[i + 1:j]).strip()
+    block = [title, ""] + ([sub, ""] if sub else [])
+    for d in dates:
+        block += [d, ""]
+    return "\n".join(block + lines[j:])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="markdown → docx 変換 + 表列幅自動調整")
     parser.add_argument("input", help="入力 markdown ファイル")
@@ -179,10 +211,21 @@ def main() -> None:
     )
     template_path = TEMPLATES[args.template]
 
+    # 先頭の日付行をタイトル・サブタイトルの後ろへ移した一時 md を pandoc に渡す
+    import tempfile
+    source = input_path.read_text(encoding="utf-8")
+    moved = move_leading_dates(source)
+    pandoc_input = input_path
+    if moved != source:
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+        tmp.write(moved)
+        tmp.close()
+        pandoc_input = Path(tmp.name)
+
     # pandoc 変換
     cmd = [
         "pandoc",
-        str(input_path),
+        str(pandoc_input),
         "-f",
         "markdown-auto_identifiers",  # 見出しIDを生成しない（docx→Google Docs でブックマークが付くのを防ぐ）
         "-M",
@@ -194,6 +237,8 @@ def main() -> None:
         str(output_path),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
+    if pandoc_input != input_path:
+        pandoc_input.unlink()
     if result.returncode != 0:
         print(f"pandoc エラー:\n{result.stderr}", file=sys.stderr)
         sys.exit(result.returncode)

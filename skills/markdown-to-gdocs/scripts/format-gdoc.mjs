@@ -111,6 +111,14 @@ if (process.argv.includes('--raw')) {
 if (INSPECT) { console.log('\n(inspect only, no changes)'); process.exit(0); }
 
 const isHeading = (p) => (p.paragraph.paragraphStyle?.namedStyleType || '').startsWith('HEADING');
+// 先頭段落はタイトル（md の # 見出し）である前提。日付や本文が先頭にある文書に当てると、
+// 日付がタイトルに、本来のタイトルが見出しになる（2026-09-30 実害）。md2docx.py が先頭の日付行を
+// タイトルの後ろへ移すので通常は起きない。起きたら整形せずに止める。--force で従来どおり適用する。
+const firstStyle = paras[0]?.paragraph.paragraphStyle?.namedStyleType || '';
+if (!['TITLE', 'HEADING_1'].includes(firstStyle) && !process.argv.includes('--force')) {
+  console.error(`\n先頭段落がタイトルではありません（${firstStyle}）。md の1行目を「# タイトル」にして md2docx.py から作り直してください。そのまま整形するなら --force。`);
+  process.exit(1);
+}
 const firstHeading = paras.findIndex((p, i) => i >= 1 && isHeading(p));
 const end = firstHeading === -1 ? paras.length : firstHeading;
 
