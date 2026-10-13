@@ -40,7 +40,7 @@
 
 `~/.claude/conventions/` が正本。**着手前に該当ファイルを読む。**
 
-- コピペ前提のテキスト（メール文案・チャット文面・URL・コマンド等） → `copy-paste-output-format.md`
+- コピペ前提のテキスト（メール文案・チャット文面・URL・コマンド等） → `copy-paste-output-format.md`。チャット内のコードブロックで出さない。チャット文面は応答本文に表示せず、pbcopy でクリップボードに入れるだけにする
 - 生きた文書（`overview.md` 等）・md 見出し規約の詳細 → `living-doc-structure.md`
 - 工程・区間・段階・章などの採番（1から始める・0番を作らない） → `numbering-starts-at-one.md`
 - スプレッドシート設計 → `spreadsheet-structure.md`
