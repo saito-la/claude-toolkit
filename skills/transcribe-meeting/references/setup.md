@@ -7,6 +7,8 @@ pip3 install google-genai
 brew install ffmpeg          # 音声分割に ffmpeg / ffprobe が必要
 ```
 
+Homebrew の Python では `pip3 install` が PEP 668（`externally-managed-environment`）で拒否され、何も入らない。その場合は `python3 -m pip install --break-system-packages google-genai` とする。入ったかは `python3 -c "import google.genai"` で確かめる。キーが設定済みでもこのライブラリが無ければ、`gemini-key-status.py`・`audio-transcribe.py` は起動時に `ModuleNotFoundError: No module named 'google'` で止まる。
+
 Homebrew が入らない Mac（管理者権限が無い端末など）では、npm レジストリだけで完結する経路を使う。
 
 ```bash
