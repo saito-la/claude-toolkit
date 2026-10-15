@@ -1,6 +1,6 @@
 ---
 name: markdown-export
-description: markdownファイルをWord(.docx)やPDFに変換したいとき（「Wordにして」「PDFにして」「docxで出力して」「印刷用に整形して」等）、およびスライドHTML（Claude Design 等が書き出す standalone HTML のデッキ）をPDFにしたいときに使うスキル。pandocを直接使わず、必ずこのスキルのスクリプトを経由する。
+description: markdownファイルをWord(.docx)やPDFに変換したいとき（「Wordにして」「PDFにして」「docxで出力して」「印刷用に整形して」等）、スライドHTML（Claude Design 等が書き出す standalone HTML のデッキ）をPDFや文字を編集できるPowerPoint(.pptx)にしたいとき、docx・pptx・xlsx を Word・PowerPoint・Excel 本体で PDF にして見た目を確かめたいときに使うスキル。pandocを直接使わず、必ずこのスキルのスクリプトを経由する。Office を AppleScript で操作するときのサンドボックスの落とし穴（許可ダイアログ）の対処もここにある。
 ---
 
 # Markdown → Word / PDF 変換
@@ -15,6 +15,8 @@ python3 $SKILL/scripts/md2pdf.py input.md                   # → PDF（A4・余
 python3 $SKILL/scripts/combine-pdfs.py -o out.pdf --title "..." a.md b.md ...   # 複数mdを1冊に結合
 python3 $SKILL/scripts/deck2pdf.py deck.html                 # → PDF（1スライド=1ページ）
 python3 $SKILL/scripts/deck2pdf.py deck.html --rasterize     # → PDF（画面描画を焼く・崩れない）
+NODE_PATH="$(npm root -g):<pptxgenjs を持つ node_modules>" node $SKILL/scripts/deck2pptx.cjs deck.html -o deck.pptx   # → PowerPoint（文字を編集できる・ノート付き）
+python3 $SKILL/scripts/office2pdf.py deck.pptx --png <確認用DIR>   # pptx / xlsx → PDF（PowerPoint / Excel 本体で書き出す。macOS）＋各ページ PNG
 python3 $SKILL/scripts/docx-track-changes.py old.docx new.docx out.docx [著者名]   # 2版の差分を Word の変更履歴にした docx
 ```
 
@@ -22,6 +24,12 @@ python3 $SKILL/scripts/docx-track-changes.py old.docx new.docx out.docx [著者�
 - **md2pdf**：pandoc → 整形HTML → Chrome印刷 → ページ番号スタンプの3段。本文全幅・内容依存の表列幅・クリック可能なURL・下中央の「n / N」が既定の仕上がり。
 - **combine-pdfs**：各mdの1行目 `# 見出し` をタイトルとして自動取得し、表紙に目次（開始頁付き）、本文にPDFしおり（既定「資料1　タイトル」形式）を生成する。本文側のH1は書き換えない。調査ダイジェスト集・添付資料の分冊など、複数PDFをまとめる場面ではワンオフのマージをせず本スクリプトに統一する。
 - **deck2pdf**：スライドHTML（standalone）を同じ Chromium に印刷させて PDF にする。生成サービス側のPDF書き出しや pptx エクスポートは別のレイアウトエンジンで組み直すため崩れる（グラデーション文字が落ちる、テキスト幅が変わって不要な改行が入る）。**外部依存のあるHTMLは不可**——画像やフォントが外部参照だと欠ける。
+
+## スライドHTMLのPowerPoint化と、PowerPointの確認
+
+- **deck2pptx**：スライドHTML（`<deck-stage>` 直下に 1スライド = 1 `<section>`、`#n` で n 枚目を表示、発表者ノートは `<aside class="notes">`）を Chromium に描画させ、各要素の位置・色・文字をそのまま PowerPoint の図形とテキストボックスに写す。相手に編集してもらう pptx を渡すときに使う。画像に焼かないので文字を直せる。書体は `--font`（既定 BIZ UDPGothic）・`--mono`（既定 Consolas）で、HTML の書体と違えば折り返し位置はわずかに変わる。pptxgenjs は `NODE_PATH` で解決する（グローバルに無ければ、pptxgenjs を持つプロジェクトの `node_modules` を足す）。
+- **office2pdf**：pptx・xlsx を Microsoft PowerPoint・Excel 本体で PDF にする（macOS）。相手が Office で開いたときの見た目を確かめる用途で、`--png` で各ページを PNG にして全部見る。docx は `docx-word-check.sh`（Word にページ数も数えさせる）。**Office の各アプリはサンドボックスの中で動くので、手元のパスを AppleScript で直接開くと「Grant File Access」ダイアログで止まり、そのダイアログが残っている間は以後どの方法で開いても失敗する。** このスキルの Office 系スクリプト（`docx-word-check.sh`・`office2pdf.py`）はいずれも、ファイルをそのアプリのコンテナ（`~/Library/Containers/com.microsoft.<App>/Data/`）へ写してから開き、同じ場所へ書かせて手元へ戻す。ダイアログで固まったアプリが残っているときは `office2pdf.py --restart`。新しく Office を AppleScript で操作するスクリプトを書くときも同じ形にする。
+- **deck2pptx で作った pptx を相手が編集したら、以後はその pptx が正本。** HTML 側へは戻らない。
 
 ## スライドPDFの作り分け
 
