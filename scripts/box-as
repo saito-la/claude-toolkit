@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# box-as — Box CLI を、既定の環境を切り替えずに指定の環境で1回だけ実行する。
+#
+#   box-as <環境名> <box のサブコマンドと引数...>
+#   例: box-as nho folders:items 0
+#       box-as utokyo files:download 123456 --destination ./dl
+#
+# Box CLI は「現在の既定環境」を1つしか持てず、複数アカウントを使い分けるには
+# configure:environments:set-current で切り替える必要がある。本スクリプトは
+# ロックを取り、既定環境を一時的に <環境名> へ切り替えて box を実行し、終了時に
+# 元の既定環境へ戻す。並行実行は ロックで直列化する。
+# 環境の一覧は `box configure:environments:list`、追加は `box login -n <環境名>`。
+set -uo pipefail
+if [[ $# -lt 2 ]]; then
+  echo "usage: box-as <環境名> <box のサブコマンドと引数...>" >&2
+  exit 2
+fi
+env="$1"; shift
+lock="${HOME}/.box/.box-as.lock"
+mkdir -p "${HOME}/.box"
+for _ in $(seq 1 300); do
+  if mkdir "$lock" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if [[ ! -d "$lock" ]]; then echo "box-as: ロックを取得できませんでした: $lock" >&2; exit 1; fi
+prev=$(box configure:environments:get --current 2>/dev/null | awk -F': ' '/^Name:/{print $2; exit}')
+restore() {
+  if [[ -n "${prev:-}" && "$prev" != "$env" ]]; then
+    box configure:environments:set-current "$prev" >/dev/null 2>&1 || echo "box-as: 既定環境を $prev へ戻せませんでした" >&2
+  fi
+  rmdir "$lock" 2>/dev/null
+}
+trap restore EXIT
+if [[ "$prev" != "$env" ]]; then
+  if ! box configure:environments:set-current "$env" >/dev/null 2>&1; then
+    echo "box-as: 環境 '$env' がありません。box configure:environments:list で確認するか、box login -n $env で作成してください" >&2
+    exit 1
+  fi
+fi
+box "$@"

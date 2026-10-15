@@ -2,6 +2,8 @@
 
 Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず Box CLI（`box files:get` / `box files:download`）を使う**。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
 
+**複数の Box アカウントは `box-as <環境名> <サブコマンド...>`（`scripts/box-as`）で使い分ける。** Box CLI の既定環境を一時的に切り替えて1回だけ実行し、終わったら元へ戻す（ロックで直列化）。`box configure:environments:set-current` で既定を切り替えたまま放置しない。環境が無い機では止まり、別アカウントの結果を黙って返さない。環境の追加は `box login --default-box-app --name <環境名>`（ブラウザでのログインは本人の操作）。個人環境では `box-nho`・`box-utokyo` 等のラッパーがこれを呼ぶ。
+
 ## Dropbox へのアクセス
 
 **Dropbox は自前実装の MCP サーバー（`dropbox-personal` 等）だけを使う。「claude.ai Dropbox」（Dash、`mcp__claude_ai_Dropbox__*`）は使わない。** Dash は接続済みと表示されていても、どのツールを呼んでも `missing required resultType` のプロトコルエラーを返して機能しない（2026-09-06 と 2026-09-16 に同じ失敗を確認）。「接続済み＝使える」ではないので、繋がって見えることを根拠に呼ばない。
