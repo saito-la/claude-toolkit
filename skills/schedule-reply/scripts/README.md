@@ -123,7 +123,7 @@ launchctl unload ~/Library/LaunchAgents/com.schedule-reply.plist
 
 実装済みの制約は以下。
 
-- 対象は **inbox 内のみ**（`in:inbox`）。処理後は `Scheduling` へ移動し inbox から外す＝再検知防止。
+- 対象は **inbox 内のみ**（`in:inbox`）。処理後は `Scheduling` へ移動し inbox から外す＝再検知防止。再検知を防ぐのは inbox から外すことなので、config の `gmail.schedulingLabel` を空にすればラベルを付けずに外すだけになる。
 - 空き判定は `config.availability` で設定した営業日・時間帯（既定：平日8:00–17:00）。範囲外は候補にしない。
 - 参照カレンダーは `config.calendar.calendarIds` で指定したもののみ。
 - **除外**：`config.exclude.senders`（送信者）・`config.exclude.subjectPatterns`（件名パターン）に一致するメール。ログにスキップ理由を残す。

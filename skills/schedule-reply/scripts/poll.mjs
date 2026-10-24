@@ -157,7 +157,8 @@ async function main() {
       // --- 7) relabel + mark read ---
       let relabeled = false;
       if (!dryRun && cfg.flags?.relabel && canRelabel) {
-        const addLabelIds = args.noLabel ? [] : [await gmail.ensureLabel(cfg.gmail.schedulingLabel)];
+        // schedulingLabel が空ならラベルを付けず、受信トレイから外す（と既読化）だけにする。再検知を防ぐのは受信トレイから外すことなので、ラベルは無くてよい
+        const addLabelIds = args.noLabel || !cfg.gmail.schedulingLabel ? [] : [await gmail.ensureLabel(cfg.gmail.schedulingLabel)];
         const remove = ['INBOX'];
         if (cfg.flags?.markRead) remove.push('UNREAD');
         await gmail.modifyMessage(id, { addLabelIds, removeLabelIds: remove });
