@@ -24,6 +24,11 @@ TEMPLATES = {
     "default": TEMPLATE_DIR / "reference-default.docx",
 }
 MIN_COL_RATIO = 0.08  # 1列あたり最低8%
+# 折り返させないセル。金額・数量などの数値と、見出しのような短い語。
+# 比率だけで配ると、長い説明の列に幅を取られて金額が「1,663,2/00」と2段に割れる。
+NOWRAP_RE = re.compile(r"^[0-9０-９,，.．\-−+＋%％()（）円 ]+$")
+NOWRAP_MAX_WIDTH = 12   # 表示幅がこれ以下のセルも折り返させない（「単価（税抜）」まで）
+CELL_PADDING_EMU = 137160  # セルの左右余白の合計（約0.38cm）
 
 
 def display_width(text: str) -> int:
@@ -88,6 +93,10 @@ def auto_adjust_tables(docx_path: Path, page_numbers: bool = False, fit_title: b
         else:
             tblPr.append(borders)
 
+    # 半角1文字の幅。本文の文字の大きさ（既定 10.5pt）の半分とみなす
+    normal_size = doc.styles["Normal"].font.size
+    unit_emu = int((normal_size.pt if normal_size else 10.5) / 2 * 12700)
+
     for table in doc.tables:
         set_table_borders(table)
         n_cols = len(table.columns)
@@ -100,14 +109,38 @@ def auto_adjust_tables(docx_path: Path, page_numbers: bool = False, fit_title: b
                     if w > max_widths[j]:
                         max_widths[j] = w
 
-        # 最小幅を保証して比率を正規化
-        total_raw = sum(max_widths) or 1
-        ratios = [max(w / total_raw, MIN_COL_RATIO) for w in max_widths]
-        total_ratio = sum(ratios)
-        ratios = [r / total_ratio for r in ratios]
+        # 折り返させないセルが1行に収まる幅を、列ごとの下限にする
+        nowrap = [0] * n_cols
+        for row in table.rows:
+            for j, cell in enumerate(row.cells):
+                if j < n_cols:
+                    text = cell.text.strip()
+                    w = display_width(text)
+                    if text and (NOWRAP_RE.match(text) or w <= NOWRAP_MAX_WIDTH) and w > nowrap[j]:
+                        nowrap[j] = w
+        # 字幅の推定は実際の字形より狭く出るので、1文字分の余裕と1割の上乗せを見込む
+        min_emus = [int((w + 1) * unit_emu * 1.1) + CELL_PADDING_EMU if w else 0 for w in nowrap]
 
-        # 幅を適用
-        col_emus = [int(usable * r) for r in ratios]
+        if sum(min_emus) <= usable:
+            # 下限を確保し、残りを折り返してよい長い文の列に配る
+            rest = usable - sum(min_emus)
+            extra = [max(m - n, 0) for m, n in zip(max_widths, nowrap)]
+            weight = sum(extra) or sum(min_emus) or 1
+            base = extra if sum(extra) else min_emus
+            col_emus = [m + int(rest * x / weight) for m, x in zip(min_emus, base)]
+        else:
+            # 下限だけで用紙幅を超える表は、従来どおり比率で配る
+            total_raw = sum(max_widths) or 1
+            ratios = [max(w / total_raw, MIN_COL_RATIO) for w in max_widths]
+            total_ratio = sum(ratios)
+            col_emus = [int(usable * r / total_ratio) for r in ratios]
+
+        # 幅を適用。表の格子（gridCol）もセルの幅に合わせる
+        grid = table._tbl.tblGrid
+        if grid is not None:
+            for j, gc in enumerate(grid.findall(qn("w:gridCol"))):
+                if j < n_cols:
+                    gc.set(qn("w:w"), str(emu_to_twips(col_emus[j])))
         for row in table.rows:
             for j, cell in enumerate(row.cells):
                 if j < n_cols:

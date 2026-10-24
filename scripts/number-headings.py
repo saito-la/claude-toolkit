@@ -44,14 +44,21 @@ def split_heading(text):
 
 
 def strip_number(title):
-    """先頭が「数字とピリオドだけ」で末尾がピリオドのトークンなら剥がす。"""
-    parts = title.split(" ", 1)
-    if len(parts) != 2:
+    """先頭の「数字とピリオドだけ」のトークンを剥がす。
+
+    末尾のピリオドが無い旧書式（`2.1 見出し`）も剥がす。剥がさないと新しい番号の後ろに
+    旧番号が残り `2.1. 2.1 見出し` になる。ピリオドを1つも含まないトークン（`2026 年` 等）は
+    番号とみなさない。旧番号と新番号が重なっていても剥がし切るまで繰り返す。
+    """
+    while True:
+        parts = title.split(" ", 1)
+        if len(parts) != 2:
+            return title
+        head = parts[0]
+        if "." in head and head.strip(DIGITS) == "" and head.strip(".") != "":
+            title = parts[1].lstrip()
+            continue
         return title
-    head = parts[0]
-    if head.endswith(".") and head.strip(DIGITS) == "":
-        return parts[1].lstrip()
-    return title
 
 
 def process(path, top_level, remove, dry_run):
