@@ -24,6 +24,10 @@
 
   python3 dedup-rm.py [--dry-run] [--against <場所>]... [--unique-ok <TSV>] <パス>...
 
+環境変数 DEDUP_RM_LEDGER に TSV のパスがあれば、消したファイルを「日時・端末・パス・種別・根拠」の
+1 行ずつで追記する（パスは ~/Projects の下なら相対）。Unison の異常報告が、外れたパスを
+「意図して消したか」で仕分けるのに使う。生成物は記録しない。
+
 消した後、渡したフォルダの中で空になったフォルダも消す。終了コードは、全部消せたら 0、
 唯一の中身を残したら 3、使い方の誤りは 2。最後の行が件数のまとめで、報告にはそれを使う。
 """
@@ -169,6 +173,23 @@ def read_tsv(path):
     return rows
 
 
+def record(rows):
+    """DEDUP_RM_LEDGER があれば、消したファイルを台帳へ追記する。失敗しても削除は止めない。"""
+    path = os.environ.get("DEDUP_RM_LEDGER")
+    if not path or not rows:
+        return
+    root = os.path.expanduser("~/Projects") + os.sep
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    host = os.uname().nodename.split(".")[0].lower()
+    try:
+        with open(os.path.expanduser(path), "a", encoding="utf-8") as f:
+            for f_path, kind, basis in rows:
+                rel = f_path[len(root):] if f_path.startswith(root) else f_path
+                f.write("\t".join([stamp, host, rel, kind, basis.replace("\t", " ").replace("\n", " ")]) + "\n")
+    except OSError as e:
+        print(f"（台帳に書けなかった：{e}）")
+
+
 def shown(p):
     cwd = os.getcwd()
     return os.path.relpath(p, cwd) if p.startswith(cwd + os.sep) else p
@@ -234,6 +255,8 @@ def main():
     if not a.dry_run:
         for f in [c for c, _ in copies] + junk + approved:
             os.remove(f)
+        record([(f, "写し", why) for f, why in copies]
+               + [(f, "承認", ok_rows[f][1]) for f in approved])
         for d in dirs:
             for dp, dn, fn in os.walk(d, topdown=False):
                 if not os.listdir(dp):
