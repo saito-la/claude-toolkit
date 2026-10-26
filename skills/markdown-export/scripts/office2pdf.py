@@ -17,6 +17,9 @@ Office 本体に PDF を書き出させる。別のレイアウトエンジン�
       ~/Library/Containers/com.microsoft.Word/Data/        （Word）
     の中へ写してから開き、同じ場所へ PDF を書かせること。コンテナの中はダイアログ無しで
     読み書きできる。書き出したら手元へ写して、コンテナの作業ファイルは消す。
+  - 開いた文書は「1番目の文書」ではなく名前で指す。利用者が同じアプリで別の文書を開いていると、
+    1番目がそちらになり、利用者の文書を PDF にしたうえ保存せずに閉じてしまう（2026-10-27、
+    開いていた Budget Sheet が閉じられ、別の表が PDF になった）。
   - ダイアログで固まったアプリが残っていると進まないので、開いている文書が無ければ
     先にそのアプリを終了させる（--restart）。
 
@@ -47,18 +50,19 @@ APPS = {
 on run argv
   set inPath to item 1 of argv
   set outPath to item 2 of argv
+  set docName to item 3 of argv
   set hfsOut to (POSIX file outPath) as string
   tell application "Microsoft PowerPoint"
     with timeout of 60 seconds
       open (POSIX file inPath)
     end timeout
     set t to 0
-    repeat until (count of presentations) > 0 or t > 30
+    repeat until (exists presentation docName) or t > 30
       delay 1
       set t to t + 1
     end repeat
-    if (count of presentations) = 0 then error "presentation did not open"
-    set p to presentation 1
+    if not (exists presentation docName) then error "presentation did not open"
+    set p to presentation docName
     with timeout of 180 seconds
       save p in hfsOut as save as PDF
     end timeout
@@ -75,18 +79,19 @@ end run
 on run argv
   set inPath to item 1 of argv
   set outPath to item 2 of argv
+  set docName to item 3 of argv
   set hfsOut to (POSIX file outPath) as string
   tell application "Microsoft Excel"
     with timeout of 60 seconds
       open (POSIX file inPath)
     end timeout
     set t to 0
-    repeat until (count of workbooks) > 0 or t > 30
+    repeat until (exists workbook docName) or t > 30
       delay 1
       set t to t + 1
     end repeat
-    if (count of workbooks) = 0 then error "workbook did not open"
-    set wb to workbook 1
+    if not (exists workbook docName) then error "workbook did not open"
+    set wb to workbook docName
     with timeout of 180 seconds
       save workbook as wb filename hfsOut file format PDF file format
     end timeout
@@ -127,12 +132,12 @@ def main():
     work = app["container"] / "tmp" / f"office2pdf-{uuid.uuid4().hex[:8]}"
     work.mkdir(parents=True)
     try:
-        wsrc = work / ("in" + ext)
+        wsrc = work / (work.name + ext)  # 利用者が開いている文書と名前で区別できるように一意の名前にする
         wout = work / "out.pdf"
         shutil.copy2(src, wsrc)
         script = work / "export.applescript"
         script.write_text(app["script"], encoding="utf-8")
-        r = subprocess.run(["osascript", str(script), str(wsrc), str(wout)], capture_output=True, text=True, timeout=400)
+        r = subprocess.run(["osascript", str(script), str(wsrc), str(wout), wsrc.name], capture_output=True, text=True, timeout=400)
         if r.returncode != 0 or not wout.exists():
             msg = (r.stderr or r.stdout).strip()
             sys.exit(
