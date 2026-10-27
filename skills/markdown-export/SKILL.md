@@ -18,6 +18,8 @@ python3 $SKILL/scripts/deck2pdf.py deck.html --rasterize     # → PDF（画面�
 NODE_PATH="$(npm root -g):<pptxgenjs を持つ node_modules>" node $SKILL/scripts/deck2pptx.cjs deck.html -o deck.pptx   # → PowerPoint（文字を編集できる・ノート付き）
 python3 $SKILL/scripts/office2pdf.py deck.pptx --png <確認用DIR>   # pptx / xlsx → PDF（PowerPoint / Excel 本体で書き出す。macOS）＋各ページ PNG
 python3 $SKILL/scripts/docx-track-changes.py old.docx new.docx out.docx [著者名]   # 2版の差分を Word の変更履歴にした docx
+python3 $SKILL/scripts/docx-fill.py show 雛型.docx                     # 相手の Word の雛型の段落・セルを番号付きで出す
+python3 $SKILL/scripts/docx-fill.py set 雛型.docx out.docx edits.json   # 雛型の書式を変えずに段落・セルへ書き込む（使い方は冒頭）
 ```
 
 - **md2docx**：pandoc変換＋表の列幅自動調整＋表罫線付与。テンプレートは同梱の `templates/reference-meiryo.docx`（全文メイリオ・本文10pt・行間0.85・既定）、`templates/reference-gothic.docx`（全文ゴシック・本文10.5pt）、`templates/reference-default.docx`（游明朝/游ゴシック標準）。meiryo は名前付きスタイル自体にフォント・サイズ・行間を持たせてあり、Google Docs へ変換したあとも既定の書式が保たれる（`markdown-to-gdocs` の `formal-ja` プリセットと同値）。
