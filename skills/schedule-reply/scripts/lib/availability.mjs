@@ -1,5 +1,6 @@
 // Judge each candidate against the configured Google Calendar's busy intervals.
 // Constraint: weekday (Mon–Fri) AND inside business hours (08:00–17:00 JST).
+// A public holiday (cfg.availability.holidays, filled by poll.mjs) is ✕ 祝日 in either form.
 //
 // Explicit slot (start+end given, e.g. 調整さん "10:00〜11:00"):
 //   outside hours / weekend        -> ✕
@@ -55,6 +56,7 @@ function freeBlocks(dateStr, winStart, winEnd, busy) {
 export function judge(candidate, busy, cfg, { supportsTriangle = true } = {}) {
   const av = cfg.availability;
   if (!av.businessDays.includes(jstWeekday(candidate.date))) return { mark: '✕', reason: '週末・休日' };
+  if (av.holidays?.includes(candidate.date)) return { mark: '✕', reason: '祝日' };
 
   const bStart = toMin(av.businessStart);
   const bEnd = toMin(av.businessEnd);
@@ -109,6 +111,20 @@ export function mergeAbsenceEvents(busy, allDayEvents, keywords = ABSENCE_KEYWOR
   }
   if (!extra.length) return busy;
   return [...busy, ...extra].sort((a, b) => a.start - b.start);
+}
+
+// Dates (YYYY-MM-DD) of the public holidays in a holiday calendar's all-day events. Google's
+// holiday calendars also carry observances (節分・七夕・クリスマス…), marked by a description that
+// starts with 祭日 / Observance; those are working days and are left out.
+export function holidayDates(events) {
+  const out = new Set();
+  for (const ev of events || []) {
+    if (/^(祭日|Observance)/.test(ev.description || '')) continue;
+    for (let d = new Date(`${ev.start}T00:00:00Z`); d < new Date(`${ev.end}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+      out.add(d.toISOString().slice(0, 10));
+    }
+  }
+  return [...out];
 }
 
 // Bounding window (ISO) covering all candidates, for a single freeBusy query.

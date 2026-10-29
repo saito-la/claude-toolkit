@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// AI秘書: 日程調整メール自動回答（tonton / 調整さん）— シングルユーザー向け
+// AI秘書: 日程調整メール自動回答（tonton / 調整さん / よていくん）— シングルユーザー向け
 //
-// 1) Gmail inbox を検索（in:inbox + tonton/調整さん URL）
+// 1) Gmail inbox を検索（in:inbox + tonton/調整さん/よていくん URL）
 // 2) 入力依頼か判定・除外（config.exclude で設定した送信者・件名パターン）
 // 3) 回答ページを開き候補日時を取得
-// 4) Googleカレンダーの空きを平日8-17時で判定（◯/△/✕）
-// 5) config.displayName の名義で入力・送信（chousei は全自動 / tonton は補助）
+// 4) Googleカレンダーの空きを平日8-17時で判定（◯/△/✕。祝日は✕）
+// 5) config.displayName の名義で入力・送信（いずれも全自動）
 // 6) 変更可能URLをブラウザで開く
 // 7) 処理済みメールを "Scheduling" へ移動・既読化
 //
@@ -24,7 +24,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { makeClient, makeGmail, makeCalendar, parseMessage } from './lib/google.mjs';
 import { classify } from './lib/classify.mjs';
-import { judge, boundingWindow, mergeAbsenceEvents } from './lib/availability.mjs';
+import { judge, boundingWindow, mergeAbsenceEvents, holidayDates } from './lib/availability.mjs';
 import { withBrowser, getAdapter, openForReview } from './lib/browser.mjs';
 import { printSummary, candidateLabel, makeFileLogger } from './lib/logger.mjs';
 import { loadProcessed, markProcessed } from './lib/state.mjs';
@@ -32,6 +32,8 @@ import { loadProcessed, markProcessed } from './lib/state.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'schedule-reply', 'config.json');
 const DEFAULT_CONFIG = existsSync(USER_CONFIG) ? USER_CONFIG : join(HERE, 'config.json');
+// Public holidays are read from this calendar unless config.calendar.holidayCalendarId says otherwise ("" = off).
+const HOLIDAY_CALENDAR = 'ja.japanese#holiday@group.v.calendar.google.com';
 
 function parseArgs(argv) {
   const a = { dryRun: false, send: false, verbose: false, config: DEFAULT_CONFIG, only: null, noLabel: false };
@@ -122,9 +124,18 @@ async function main() {
           calendarIds: cfg.calendar.calendarIds, timeMin, timeMax,
         });
         const busy = mergeAbsenceEvents(freeBusyList, allDayEvents, cfg.availability?.absenceKeywords);
+        // Public holidays are not in freeBusy (holiday events are transparent), so judge them as ✕ 祝日.
+        const holidayCal = cfg.calendar.holidayCalendarId ?? HOLIDAY_CALENDAR;
+        const holidays = holidayCal
+          ? holidayDates(await calendar.listAllDayEvents({ calendarIds: [holidayCal], timeMin, timeMax }).catch((e) => {
+            console.error(`⚠ 祝日カレンダーを読めないため祝日を判定しません: ${e.message}`);
+            return [];
+          }))
+          : [];
+        const judgeCfg = { ...cfg, availability: { ...cfg.availability, holidays } };
         const decisions = candidates.map((cand) => ({
           candidate: cand,
-          ...judge(cand, busy, cfg, { supportsTriangle: adapter.supportsTriangle }),
+          ...judge(cand, busy, judgeCfg, { supportsTriangle: adapter.supportsTriangle }),
         }));
 
         // --- 5) answer ---
@@ -134,7 +145,7 @@ async function main() {
           dryRun,
           editPassword: cfg.browser?.tontonEditPassword || '',
           busy,
-          cfg,
+          cfg: judgeCfg,
         });
         return { title, candidates, decisions, ans };
       });

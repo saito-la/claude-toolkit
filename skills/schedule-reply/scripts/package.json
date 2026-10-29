@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "AI秘書: 日程調整メール(tonton/調整さん)を検知し、Googleカレンダーの空きを判定して回答欄に自動入力する（シングルユーザー向け・要個別設定）",
+  "description": "AI秘書: 日程調整メール(tonton/調整さん/よていくん)を検知し、Googleカレンダーの空きを判定して回答欄に自動入力する（シングルユーザー向け・要個別設定）",
   "bin": {
     "schedule-reply": "./poll.mjs"
   },

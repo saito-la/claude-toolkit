@@ -3,8 +3,9 @@ import { chromium } from 'playwright';
 import { execFile } from 'node:child_process';
 import * as tonton from './adapters/tonton.mjs';
 import * as chousei from './adapters/chousei.mjs';
+import * as yotei from './adapters/yotei.mjs';
 
-const ADAPTERS = { tonton, chousei };
+const ADAPTERS = { tonton, chousei, yotei };
 export const getAdapter = (tool) => ADAPTERS[tool];
 
 export async function withBrowser(headless, fn) {

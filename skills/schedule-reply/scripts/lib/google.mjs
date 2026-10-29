@@ -166,7 +166,7 @@ export function makeCalendar(client) {
       const r = await client.api(u.toString());
       for (const ev of r.items || []) {
         if (ev.status === 'cancelled' || !ev.start?.date) continue;
-        events.push({ summary: ev.summary || '', start: ev.start.date, end: ev.end.date, transparency: ev.transparency || 'opaque' });
+        events.push({ summary: ev.summary || '', description: ev.description || '', start: ev.start.date, end: ev.end.date, transparency: ev.transparency || 'opaque' });
       }
     }
     return events;

@@ -4,7 +4,7 @@
   "gmail": {
     "credentialsPath": "/Users/<ユーザー名>/.config/gdrive-mcp/.gmail-credentials-private.json",
     "oauthClientPath": "/Users/<ユーザー名>/.config/gdrive-mcp/credentials.json",
-    "searchQuery": "in:inbox (tonton.amaneku.com OR chouseisan.com) newer_than:14d",
+    "searchQuery": "in:inbox (tonton.amaneku.com OR chouseisan.com OR yotei-kun.jp) newer_than:14d",
     "schedulingLabel": "Scheduling"
   },
 
@@ -12,6 +12,7 @@
     "credentialsPath": "/Users/<ユーザー名>/.config/gdrive-mcp/.gcal-credentials-<アカウント名>.json",
     "oauthClientPath": "/Users/<ユーザー名>/.config/gdrive-mcp/credentials.json",
     "calendarIds": ["primary"],
+    "holidayCalendarId": "ja.japanese#holiday@group.v.calendar.google.com",
     "timezone": "Asia/Tokyo"
   },
 

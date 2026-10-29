@@ -1,6 +1,6 @@
 # schedule-reply — 日程調整メール自動回答
 
-シングルユーザー向け・要個別セットアップ。Gmail の inbox を定期ポーリングし、**tonton / 調整さん**
+シングルユーザー向け・要個別セットアップ。Gmail の inbox を定期ポーリングし、**tonton / 調整さん / よていくん**
 の日程調整入力依頼を検知して、Google カレンダーの空きを `config.availability` で設定した
 営業時間で判定し、回答欄を `config.displayName` の名義で自動入力する。処理済みメールは `Scheduling` ラベルへ
 移動して既読化する。
@@ -26,12 +26,22 @@ in:inbox 検索 ─▶ 分類/除外 ─▶ 回答ページを開く ─▶ 候�
 |---|---|---|---|
 | **調整さん** (chouseisan.com) | 埋め込みJSON `choices` から取得 | ◯/△/✕（枠単位） | **全自動**：名前入力→各候補を alt 属性で ◯/△/✕ クリック→フォーム送信 |
 | **tonton** (tonton.amaneku.com) | グリッド見出しの日付から取得 | 日単位◯/△/✕（ログ表示）＋30分枠単位 | **全自動**：`/add.php` へ回答フォームを直接POST（`mtgtime_flg_N` 文字列） |
+| **よていくん** (yotei-kun.jp) | ページが公開する `window.S`（期間・時間帯・刻み・回答）から算出 | 日単位◯/△/✕（ログ表示）＋枠単位（○か空欄の2値） | **全自動**：表の空き枠を選択→「回答を送信する」→別のブラウザで読み直して一致を確認 |
 
 tonton のタイムラインはセルがクリック不能（0サイズspan・JS不透明）のため、UI操作ではなく
 **回答を直接POST**する。各日 `mtgtime_flg_N`（48文字、位置=00:00からの30分刻み）で、空き＝`5`(○)・
 予定あり／時間外＝`1`(×)・非提案＝`-`。**全提案枠を○か×で明示**（空白を残さない）。ログの日単位◯/△/✕は
 概況で、実体は30分枠単位。tonton は後から編集するため `browser.tontonEditPassword` の設定必須
 （同名＋パスワードで既存回答を削除して上書きするため。未設定だと再回答が重複登録になる）。
+
+よていくんは Firebase で動く1ページのアプリで、`/s/<ID>` は `/#event/<ID>/answer` に移る。アプリが状態を
+`window.S`（期間 `startDate`〜`endDate`、`excludeWeekends`、時間帯 `tStart`〜`tEnd`、刻み `step`、回答 `answers`）に、
+操作を `window.startAnswering` 等に出しているので、文字ではなくそれを読む。回答は表のキー `<日の番号>-<枠の番号>` の集合で、
+選んだ枠＝参加できる、の2値しか無い（△・×は無い）。業務時間内で空いている枠だけを選び、他は空欄にする。
+回答は端末の localStorage の `yotei_uid` ごとに1行で、同じ uid なら上書き、新しい uid なら行が増える。毎回新しいブラウザで
+開くため、`displayName` と同じ名前の回答が既にあればその uid を使い回して上書きする（tonton と同じく名前で同一人物とみなす。
+パスワードは要らない）。送信後は、保存がローカルに留まっても結果画面へ移るアプリなので、別のブラウザで開き直して
+サーバー側の回答が送った枠と一致することを確かめる。1on1（枠の予約）形式は未対応で、エラーにして手で回答させる。
 
 ## コードと個人データの分離
 
@@ -58,6 +68,7 @@ cp "$SCRIPTS/config.example.json" ~/.config/schedule-reply/config.json
 chmod 700 ~/.config/schedule-reply && chmod 600 ~/.config/schedule-reply/config.json
 #   - displayName / 除外リスト / businessStart-End を自分の値に設定
 #   - gmail/calendar の credentialsPath を自分のGoogle OAuth認証情報のパスに合わせる
+#   - gmail.searchQuery は対応ツールのドメイン（tonton.amaneku.com・chouseisan.com・yotei-kun.jp）を OR で並べる
 #   - flags.dryRun を false にすると送信あり（既定運用）。true なら判定のみ
 
 # 3) 実行（cwd 非依存。config は自動で ~/.config/schedule-reply/config.json が使われる）
@@ -71,7 +82,7 @@ node "$SCRIPTS/poll.mjs" --send --only <Gmailメッセージid>  # inbox内の�
 
 都度手動で回す場合は上記コマンドを実行するだけ（launchd 不要）。送信すると回答ページを既定ブラウザで開き、内容確認を促す。
 
-**会話経由で「このメールに回答して」と特定の1通を指定されたときは、必ず `--only <Gmailメッセージid>` を付ける。** 省略すると inbox 内の他の未処理案件（別件の tonton/調整さん）も一括で自動送信されてしまう。
+**会話経由で「このメールに回答して」と特定の1通を指定されたときは、必ず `--only <Gmailメッセージid>` を付ける。** 省略すると inbox 内の他の未処理案件（別件の日程調整）も一括で自動送信されてしまう。
 
 Claude Codeスキルとしての導入方法は `../SKILL.md` および claude-toolkit トップの README を参照。
 
@@ -89,7 +100,7 @@ node -e "import('playwright').then(m=>console.log('OK', !!m.chromium))"
 ## 本番投入の順序
 
 1. **`--dry-run` で判定表を確認**（誤検知・除外もれがないか）。
-2. **送信を有効化**：`config.json` の `flags.dryRun` を `false` に（調整さん・tonton とも送信経路は検証済み）。
+2. **送信を有効化**：`config.json` の `flags.dryRun` を `false` に（調整さん・tonton・よていくんとも送信経路は検証済み）。
    - tonton は後から編集できるよう `browser.tontonEditPassword` を設定推奨。
 3. **ラベル移動・既読化を有効化**：Gmail に `gmail.modify` スコープを追加（下記）。
 4. **定期実行を登録**（launchd、任意）。
@@ -128,15 +139,16 @@ launchctl unload ~/Library/LaunchAgents/com.schedule-reply.plist
 - 参照カレンダーは `config.calendar.calendarIds` で指定したもののみ。
 - **除外**：`config.exclude.senders`（送信者）・`config.exclude.subjectPatterns`（件名パターン）に一致するメール。ログにスキップ理由を残す。
 - 検知は**メインメッセージ（引用・過去スレッドを除いた本文冒頭）**で判定。対象URLと入力依頼の両方がメイン部にある場合のみ動作。議事録・通知・返信引用にだけ URL があるメールは自動スキップ（メインが日程調整依頼でないため）。
-- tonton は**ログインしない**（公開ページ扱い）。
+- tonton・よていくんは**ログインしない**（公開ページ扱い）。
 - 個人データ（`config.json`・`state.jsonl`・`logs/`）は `~/.config/schedule-reply/` に置きリポジトリに入れない（上記「コードと個人データの分離」）。同名ファイルをこのディレクトリに置いた場合に備えて `.gitignore` にも入れてある。
 
 ## 判定ロジック
 
 - **時刻つき候補**（調整さん「10:00〜11:00」等）：時間外/週末→✕、空き→◯、一部重複→△、全重複→✕。
-- **日単位候補**（tonton の日付列）：会議長（既定60分）以上の空き枠が業務時間内に…
+- **日単位候補**（tonton・よていくんの日付列）：会議長（既定60分）以上の空き枠が業務時間内に…
   - 無い/週末 → ✕、有り かつ 業務時間の半分以上空き → ◯、有るが混雑 → △。
 - タイムゾーンは Asia/Tokyo 固定。
+- **祝日**は時刻の有無によらず ✕（根拠「祝日」）。祝日の予定は Google カレンダー上で空き扱い（transparent）のため freeBusy に出ない。`poll.mjs` が `config.calendar.holidayCalendarId`（既定：Google の日本の祝日カレンダー `ja.japanese#holiday@group.v.calendar.google.com`、空文字で無効）を読み、説明欄が「祭日」で始まる行事（節分・七夕・クリスマス等）は除いて祝日だけを使う。読めなければ警告を出して祝日の判定なしで続ける。
 - 空き判定は **freeBusy（config.calendar.calendarIds）** に基づく。予定あり・不在・仮予定（未確定）など不透過イベントは全て busy として反映され、空き時間のみ ◯。判定はポーリング検知時点のカレンダーで行うため、回答後にカレンダーを変更した場合は内容がずれ得る（tonton は同名＋パスワードで再送信すれば既存回答を削除して上書きする）。
 - **終日イベントのフォールバック**：Google Calendar は終日イベントを既定で `transparency=transparent`（空き扱い）で作成するため、出張・休暇等の終日イベントを transparency 未設定のまま作ると freeBusy がその期間を素通りする（実例：2026-08-25、10日間の出張イベントが transparent のままで tonton に◯/△回答してしまった）。恒久対策は作成時に `transparency=opaque` を明示すること（既存イベントは Calendar API の `events.patch` で `transparency` を `opaque` に更新する）だが、それを徹底できていない場合の保険として、`lib/availability.mjs` の `mergeAbsenceEvents` が対象期間の終日イベントを別途取得し、タイトルが `config.availability.absenceKeywords`（既定：出張・休暇・有給・不在・休み・休業）に一致する transparent イベントを busy へ強制的に合流させる。
 
@@ -155,10 +167,11 @@ schedule-reply/
     └── lib/
         ├── google.mjs              # OAuth更新＋Gmail/Calendar REST（fetchのみ・依存ゼロ）
         ├── classify.mjs            # ツール判別・入力依頼判定・除外
-        ├── availability.mjs        # 平日8-17＋freeBusy → ◯/△/✕
+        ├── availability.mjs        # 平日8-17＋freeBusy＋祝日 → ◯/△/✕
         ├── browser.mjs             # Playwright起動＋アダプタ振り分け＋確認用オープン
         ├── adapters/tonton.mjs     # tonton（/add.php 直接POST・mtgtime_flg・重複時は削除して上書き）
         ├── adapters/chousei.mjs    # 調整さん（埋め込みJSON＋表UI）
+        ├── adapters/yotei.mjs      # よていくん（window.S＋表の選択・同名の uid で上書き・送信後にサーバー側を確認）
         ├── logger.mjs              # 要約出力＋JSONLログ
         └── state.mjs               # 処理済みメールの重複防止
 ```
@@ -182,3 +195,5 @@ schedule-reply/
 | 調整さんの送信不可 | 先方UI変更。`alt`属性（`<候補>_まる/さんかく/ばつ`）の書式を確認 |
 | tonton の入力が反映されない／位置ズレ | `/add.php` の `mtgtime_flg_N` 書式変更を確認（位置=HH×2+MM/30、`5`○/`1`×/`-`非提案） |
 | tonton が重複登録される | `browser.tontonEditPassword` 未設定。設定すれば再回答時に旧エントリを削除して上書き |
+| よていくんで「表の日付が想定と違う」 | 先方の日付の展開（`getEventDates`）が変わった。`app.js` の `getEventDates`・`getSlots` と `adapters/yotei.mjs` の `eventDates`・`slotStarts` を突き合わせる |
+| よていくんで「サーバー側の回答が一致しない」 | 保存がローカルに留まった（通信・認証の失敗）か、同名の確認ダイアログで止まった。結果画面を開いて自分の行を確かめ、再実行する（同名の行を上書きするので重複しない） |
