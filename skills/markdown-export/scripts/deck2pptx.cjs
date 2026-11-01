@@ -13,6 +13,8 @@
  * 写し方:
  *   - 背景色・枠線を持つ要素 → 図形（角丸は rectRadius、正円は ellipse、辺ごとの枠線は細い矩形）
  *   - 背景画像（data URI）→ 画像、linear-gradient の硬い段差 → 色の帯
+ *   - <svg>・<img>・<canvas> → その要素だけを透過 PNG に撮って画像として置く（図は編集できないが形は崩れない）
+ *   - 破線・点線の枠線 → PowerPoint の破線・点線
  *   - ブロック要素の中のインライン文字列 → 1つのテキストボックス（太字・色・サイズ・等幅をランで保持）
  *   - 文字の折り返し幅は要素の内容幅に合わせる（書体が違うと折り返し位置はわずかに変わる）
  *
@@ -93,7 +95,7 @@ function extract(section) {
         if (!pre) {
           t = t.replace(/[ \t\r\n]+/g, ' ');
           if (!t.trim()) continue;
-        } else if (!t.replace(/\n/g, '').trim() && !t.includes('\n')) continue;
+        } else if (t === '') continue; // pre の中の空白だけの文字（コードの字下げ）も残す
         const range = document.createRange();
         range.selectNodeContents(n);
         for (const rr of range.getClientRects()) if (rr.width > 0 && rr.height > 0) rects.push(rr);
@@ -133,7 +135,7 @@ function extract(section) {
       items.push({
         type: 'shape', rect: r, radius,
         fill: bg.a > 0 ? bg.hex : null,
-        line: uniform ? { color: sides[0].c.hex, w: sides[0].w } : null,
+        line: uniform ? { color: sides[0].c.hex, w: sides[0].w, dash: sides[0].st } : null,
         ellipse: radius > 0 && radius >= Math.min(r.w, r.h) / 2 - 0.5,
         topRoundOnly: radius === 0 && el.parentElement && el === el.parentElement.firstElementChild
           && getComputedStyle(el.parentElement).overflow === 'hidden' && (parseFloat(getComputedStyle(el.parentElement).borderTopLeftRadius) || 0) > 0,
@@ -148,6 +150,16 @@ function extract(section) {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') return;
     const r = rel(el.getBoundingClientRect());
+    // 図（SVG・画像・canvas）は要素だけを撮って画像にする。中は辿らない
+    if (['svg', 'img', 'canvas'].includes(el.tagName.toLowerCase())) {
+      if (r.w > 0 && r.h > 0) {
+        window.__d2pN = (window.__d2pN || 0) + 1;
+        const id = 'r' + window.__d2pN;
+        el.setAttribute('data-d2p', id);
+        items.push({ type: 'raster', rect: r, id, abs: { x: r.x + SR.left, y: r.y + SR.top } });
+      }
+      return;
+    }
     const inline = !isBlock(el);
     if (r.w > 0 && r.h > 0 && el !== section) {
       shapesOf(el, cs, r);
@@ -197,11 +209,17 @@ function extract(section) {
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 });
+  // 図を撮るときの解像度のために 2 倍で描く（配置の座標は CSS の px のまま）
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
   await page.goto(pathToFileURL(HTML).href, { waitUntil: 'load' });
   await page.waitForTimeout(3000);
   await page.evaluate(() => document.fonts && document.fonts.ready);
   await page.evaluate((src) => { window.__deck2pptxExtract = src; }, extract.toString());
+  // 図を撮るとき、対象の要素以外を見えなくし、背景を透過にする
+  await page.addStyleTag({ content: `
+    html.d2p-raster, html.d2p-raster body, html.d2p-raster deck-stage, html.d2p-raster deck-stage > section { background: transparent !important; }
+    html.d2p-raster deck-stage > section * { visibility: hidden !important; }
+    html.d2p-raster [data-d2p-on], html.d2p-raster [data-d2p-on] * { visibility: visible !important; }` });
   const n = await page.evaluate(() => document.querySelectorAll('deck-stage > section').length);
   if (!n) { console.error('ERROR: deck-stage > section が見つかりません'); process.exit(1); }
 
@@ -218,11 +236,26 @@ function extract(section) {
       const sec = document.querySelectorAll('deck-stage > section')[k - 1];
       return (0, eval)('(' + window.__deck2pptxExtract + ')')(sec);
     }, i);
+    for (const it of d.items) {
+      if (it.type !== 'raster') continue;
+      await page.evaluate((id) => {
+        document.documentElement.classList.add('d2p-raster');
+        document.querySelector(`[data-d2p="${id}"]`).setAttribute('data-d2p-on', '');
+      }, it.id);
+      const buf = await page.screenshot({ clip: { x: it.abs.x, y: it.abs.y, width: it.rect.w, height: it.rect.h }, omitBackground: true });
+      await page.evaluate((id) => {
+        document.documentElement.classList.remove('d2p-raster');
+        document.querySelector(`[data-d2p="${id}"]`).removeAttribute('data-d2p-on');
+      }, it.id);
+      it.data = 'data:image/png;base64,' + buf.toString('base64');
+    }
     const slide = pptx.addSlide();
     slide.background = { color: 'FFFFFF' };
     for (const it of d.items) {
       const R = it.rect || it.box;
-      if (it.type === 'image') {
+      if (it.type === 'raster') {
+        slide.addImage({ data: it.data, x: px2in(R.x), y: px2in(R.y), w: px2in(R.w), h: px2in(R.h) });
+      } else if (it.type === 'image') {
         slide.addImage({ data: it.data, x: px2in(R.x), y: px2in(R.y), w: px2in(R.w), h: px2in(R.h), sizing: { type: 'contain', w: px2in(R.w), h: px2in(R.h) } });
       } else if (it.type === 'gradient') {
         for (let s = 0; s + 1 < it.stops.length; s += 2) {
@@ -236,7 +269,9 @@ function extract(section) {
         const base = { x: px2in(R.x), y: px2in(R.y), w: px2in(R.w), h: px2in(R.h) };
         const style = {
           fill: it.fill ? { color: it.fill } : { color: 'FFFFFF', transparency: 100 },
-          line: it.line ? { color: it.line.color, width: px2pt(it.line.w) } : { color: 'FFFFFF', width: 0, transparency: 100 },
+          line: it.line ? { color: it.line.color, width: px2pt(it.line.w),
+            ...(it.line.dash === 'dashed' ? { dashType: 'dash' } : it.line.dash === 'dotted' ? { dashType: 'sysDot' } : {}) }
+            : { color: 'FFFFFF', width: 0, transparency: 100 },
         };
         if (it.ellipse) {
           slide.addShape(pptx.ShapeType.ellipse, { ...base, ...style });
@@ -271,22 +306,28 @@ function extract(section) {
           });
         }
         if (!runs.length) continue;
-        runs[0].text = runs[0].text.replace(/^\s+/, '');
+        // white-space: pre の文字（コードの字下げ）は行頭の空白を残す
+        if (!it.runs.some((x) => x.pre)) runs[0].text = runs[0].text.replace(/^\s+/, '');
         runs[runs.length - 1].text = runs[runs.length - 1].text.replace(/\s+$/, '');
         const B = { ...it.box };
         const shift = it.listItem ? 34 : 0;
-        // HTML で1行に収まっていた文字は折り返させない（書体の違いで幅が少し変わるため、箱も広げる）
-        const single = it.lines === 1 && !runs.some((x) => x.options.breakLine);
+        // HTML で1行に収まっていた文字と、<br> の改行だけで行を分けていた文字は折り返させない
+        // （書体の違いで幅が少し変わるため、箱も広げる）
+        const hard = runs.filter((x) => x.options.breakLine).length;
+        const single = it.lines === hard + 1;
+        const oneLine = it.lines === 1 && hard === 0;
         if (single) {
           const extra = B.w * 0.25 + 20;
           if (it.align === 'center') B.x -= extra / 2;
           else if (it.align === 'right') B.x -= extra;
           B.w += extra;
         }
+        // 1行の文字は行送りを指定せず、描かれた字面の矩形の上下中央に置く
+        // （行送りを指定すると、行の高さの余白の分だけ字が下へずれる。丸の中の数字などで目立つ）
         slide.addText(runs, {
           x: px2in(B.x - shift), y: px2in(B.y - 2), w: px2in(B.w + shift), h: px2in(B.h + 6),
-          align: it.align, valign: 'top', margin: 0, wrap: !single, fit: single ? 'none' : 'shrink',
-          lineSpacing: px2pt(it.lineHeight), paraSpaceAfter: 0, paraSpaceBefore: 0,
+          align: it.align, valign: oneLine ? 'middle' : 'top', margin: 0, wrap: !single, fit: single ? 'none' : 'shrink',
+          ...(oneLine ? {} : { lineSpacing: px2pt(it.lineHeight) }), paraSpaceAfter: 0, paraSpaceBefore: 0,
           bullet: it.listItem ? { indent: px2pt(34) } : false,
         });
       }

@@ -17,6 +17,7 @@ python3 $SKILL/scripts/deck2pdf.py deck.html                 # → PDF（1スラ
 python3 $SKILL/scripts/deck2pdf.py deck.html --rasterize     # → PDF（画面描画を焼く・崩れない）
 NODE_PATH="$(npm root -g):<pptxgenjs を持つ node_modules>" node $SKILL/scripts/deck2pptx.cjs deck.html -o deck.pptx   # → PowerPoint（文字を編集できる・ノート付き）
 python3 $SKILL/scripts/office2pdf.py deck.pptx --png <確認用DIR>   # pptx / xlsx → PDF（PowerPoint / Excel 本体で書き出す。macOS）＋各ページ PNG
+<python-pptx を持つ python> $SKILL/scripts/pptx-onto-template.py deck.pptx template.pptx --map slides.json -o out.pptx   # deck2pptx の pptx を主催者テンプレートのレイアウトへ載せ替える（動画の埋め込みも）
 python3 $SKILL/scripts/docx-track-changes.py old.docx new.docx out.docx [著者名]   # 2版の差分を Word の変更履歴にした docx
 python3 $SKILL/scripts/docx-fill.py show 雛型.docx                     # 相手の Word の雛型の段落・セルを番号付きで出す
 python3 $SKILL/scripts/docx-fill.py set 雛型.docx out.docx edits.json   # 雛型の書式を変えずに段落・セルへ書き込む（使い方は冒頭）
@@ -32,6 +33,7 @@ python3 $SKILL/scripts/docx-fill.py set 雛型.docx out.docx edits.json   # 雛�
 - **deck2pptx**：スライドHTML（`<deck-stage>` 直下に 1スライド = 1 `<section>`、`#n` で n 枚目を表示、発表者ノートは `<aside class="notes">`）を Chromium に描画させ、各要素の位置・色・文字をそのまま PowerPoint の図形とテキストボックスに写す。相手に編集してもらう pptx を渡すときに使う。画像に焼かないので文字を直せる。書体は `--font`（既定 BIZ UDPGothic）・`--mono`（既定 Consolas）で、HTML の書体と違えば折り返し位置はわずかに変わる。pptxgenjs は `NODE_PATH` で解決する（グローバルに無ければ、pptxgenjs を持つプロジェクトの `node_modules` を足す）。
 - **office2pdf**：pptx・xlsx を Microsoft PowerPoint・Excel 本体で PDF にする（macOS）。相手が Office で開いたときの見た目を確かめる用途で、`--png` で各ページを PNG にして全部見る。docx は `docx-word-check.sh`（Word にページ数も数えさせる）。**Office の各アプリはサンドボックスの中で動くので、手元のパスを AppleScript で直接開くと「Grant File Access」ダイアログで止まり、そのダイアログが残っている間は以後どの方法で開いても失敗する。** このスキルの Office 系スクリプト（`docx-word-check.sh`・`office2pdf.py`）はいずれも、ファイルをそのアプリのコンテナ（`~/Library/Containers/com.microsoft.<App>/Data/`）へ写してから開き、同じ場所へ書かせて手元へ戻す。ダイアログで固まったアプリが残っているときは `office2pdf.py --restart`。新しく Office を AppleScript で操作するスクリプトを書くときも同じ形にする。
 - **deck2pptx で作った pptx を相手が編集したら、以後はその pptx が正本。** HTML 側へは戻らない。
+- **pptx-onto-template**：学会・大会が指定のスライドテンプレートを求めるとき、deck2pptx の pptx の各スライドを、テンプレートのマスター・レイアウト・テーマの上に載せ直す。ロゴ・足元・背景の飾りはレイアウトが持つので、HTML 側は飾りを消した版を deck2pptx に通す。タイトルはレイアウトのタイトルのプレースホルダーへ移し、ノートを写し、指定のスライドに動画を埋め込む。対応表の書式は冒頭の説明。テンプレートは大会ごと・年ごとに変わるので、テンプレートを HTML に写すより、毎回このスクリプトで載せ替える方が手戻りが少ない。依存は python-pptx（venv に入れる）。
 
 ## スライドPDFの作り分け
 
