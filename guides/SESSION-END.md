@@ -2,6 +2,8 @@
 
 「セッションを終わります」「終えます」「終了します」等の発言を検知したら、以下を**確認なしに順番に実行**する。Claude Code から実行しても Codex から実行しても手順は同じで、違うのは Step 2 のトランスクリプト取得と Step 6 だけ（該当箇所に分岐を書いてある）。
 
+**cwd が worktree の中（`.claude/worktrees/<名前>/` 配下、または Orca の作業場 `~/orca/workspaces/<リポジトリ>/<名前>/` 配下）なら、末尾の「worktree セッション」を読み、該当 Step を上書きする。**
+
 **`~/.claude/SESSION-END-local.md` があれば併せて読み、そこで指定された追加ステップ・上書きを指示された位置に挿入して実行する**（無ければスキップ）。個人・組織に固有の手順はそちらにある。
 
 ## Step 1: テンポラリファイルの自動整理
@@ -81,3 +83,18 @@
 `/rename plant-taro-sprouting-plan` をクリップボードからそのまま貼り付けて実行してください
 ```
 （`plant-taro-sprouting-plan` は例。実際に決めた名前をそのまま入れる）
+
+## worktree セッション
+
+cwd が `.claude/worktrees/<名前>/` 配下（pj が本体の埋まっているときに作ったもの）か、`~/orca/workspaces/<リポジトリ>/<名前>/` 配下（Orca の作業場）のとき、次の Step を上書きする。設計は `~/.claude/skills/pj/SKILL.md`「worktree」。
+
+- Step 2（作業ログ）：`docs/work-logs/YYYYMMDD-work-log-<名前>.md` に書く。並行して走る別セッションが同じ日付のログを書くため、同名だと統合時に必ず衝突する。冒頭に「この worktree で何をしたか」を1行書き、同日の他セッションのログとは独立して読めるようにする
+- Step 5（git commit & push）：commit までは通常どおり。push は自分で打たず、次を実行する。rebase、push、worktree とブランチの片付けまで行う。未コミットが残っていれば中断するので、先に commit を済ませる。衝突したら worktree の中で解決して再実行する（`--dry-run` で何が起きるか先に見られる）
+
+  ```bash
+  bash ~/.claude/skills/pj/scripts/wt-finish.sh
+  ```
+
+- 他の Step は通常どおり
+
+統合が終わると cwd（worktree）は消えるため、そのウィンドウはそれ以上使えない。閉じてよい。Orca の画面からは作業場が次の更新で消える。

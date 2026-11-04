@@ -40,7 +40,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）8件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）9件：
 
 | スキル | 内容 |
 |---|---|
@@ -52,6 +52,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [rescue-session](skills/rescue-session/SKILL.md) | API Error で続けられなくなったセッションの JSONL から、指示・報告・ツール実行結果を読める Markdown に回収 |
 | [speaker-script](skills/speaker-script/SKILL.md) | 読み原稿の md（1スライド1節・開始の目安の時刻つき）から、iPad で読む読み原稿＋残り時間のタイマーの HTML を作る。デッキの発表者ノートにも同じ md を使える |
 | [claude-usage](skills/claude-usage/SKILL.md) | セッション記録から端末ごとの使用時間・VS Code と CLI の割合・並行数・依頼の数・トークンを CSV に書き出し、複数端末分をまとめて集計 |
+| [pj](skills/pj/SKILL.md) | 作業内容の文から ~/Projects の行き先を選び、Orca の作業場か新しい iTerm2 の窓で claude を起動する（Mac）。worktree の統合（wt-finish.sh）も持つ |
 
 **個別プロジェクト配置**（用途が特定プロジェクトに閉じるため、グローバルには置かない）5件：
 
@@ -127,6 +128,7 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 
 | ツール | 内容 |
 |---|---|
+| [orca](tools/orca/README.md) | 複数のエージェントを並べて動かす Orca の入れ方（管理者権限の無い Mac を含む）・画面での設定・リポジトリの登録 |
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |
 | [title-url-bookmarklet](tools/title-url-bookmarklet/README.md) | 現在開いているページの「タイトル + 改行 + URL」をクリップボードにコピーするブックマークレット |
