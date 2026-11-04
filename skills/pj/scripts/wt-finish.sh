@@ -20,6 +20,12 @@
 
 set -euo pipefail
 
+# Mac と Windows（Git Bash）の差は pj-platform.sh が吸収する。Windows では、動いているプロセスの
+# 作業フォルダは消せない（このスクリプトを呼ぶ claude 自身と、Orca の端末のシェルが worktree の中に
+# 居る）。そのため統合と push までをここで行い、worktree とブランチの片付けは、worktree の中の
+# claude がすべて終わってから裏で行う（下の「4. 片付け」。2026-11-04、311C4W991 で検証）
+source "$(dirname "${BASH_SOURCE[0]}")/pj-platform.sh"
+
 die() { printf '%s\n' "wt-finish.sh: $*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
 
@@ -47,7 +53,7 @@ git_dir="$(git rev-parse --git-dir)"
 common_dir="$(git rev-parse --git-common-dir)"
 [[ "$git_dir" != "$common_dir" ]] || die "ここは worktree ではない（本体で実行しても統合するものが無い）"
 
-WT_DIR="$(git rev-parse --show-toplevel)"
+WT_DIR="$(pj_posix "$(git rev-parse --show-toplevel)")"
 # git-common-dir は本体の .git を指す。その親が本体の作業ツリー。
 MAIN_REPO="$(cd "$(dirname "$(cd "$common_dir" && pwd)")" && pwd)"
 branch="$(git rev-parse --abbrev-ref HEAD)"
@@ -142,6 +148,23 @@ if (( keep )); then
   say ""
   say "--keep のため worktree は残す: ${WT_DIR/#$HOME/~}"
   say "後で片付けるときは本体で: git worktree remove ${WT_DIR/#$HOME/~} && git branch -d $branch"
+elif (( PJ_WIN )); then
+  say ""
+  pids="$(pj_live_pids_under "$WT_DIR" | tr '\n' ' ')"
+  if (( dry_run )); then
+    printf '  [dry-run] この worktree の claude（pid: %s）が終わった後に、裏で worktree とブランチを片付ける\n' "${pids:-なし}"
+  else
+    # Claude Code のシェルが終わっても止まらないよう、PowerShell の Start-Process で切り離して起動する。
+    # bash は -l で起動し、git などの PATH を揃える
+    cleanup="$(dirname "${BASH_SOURCE[0]}")/wt-cleanup-later.sh"
+    bash_exe="$(pj_win "$(command -v bash)")"
+    arglist="-l \"$(pj_posix "$cleanup")\" \"$WT_DIR\" \"$MAIN_REPO\" \"$branch\" \"$default_branch\" $pids"
+    powershell.exe -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath '$bash_exe' -ArgumentList '${arglist//\'/\'\'}'" \
+      || die "片付けを裏で起動できなかった。後で本体から: git worktree remove ${WT_DIR/#$HOME/~}"
+    say "統合と push は済んだ。worktree とブランチは、この worktree の claude が終わった後に裏で片付ける"
+    say "（Windows では使用中のフォルダを消せないため。記録は ~/.cache/pj/wt-cleanup.log）"
+    say "claude を終える（/exit）か、窓や Orca のタブを閉じてよい"
+  fi
 else
   say ""
   say "worktree とブランチを片付ける"

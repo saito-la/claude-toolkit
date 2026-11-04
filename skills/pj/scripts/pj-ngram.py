@@ -26,6 +26,13 @@ import pathlib
 import re
 import sys
 import unicodedata
+import os
+
+# Windows では標準出力が cp932・CRLF になり、呼び出す bash が日本語と行末を読み違える。
+# UTF-8・LF に揃える（pj-platform.sh の冒頭）
+if os.name == "nt":
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", newline="\n")
 
 ASCII_WORD_RE = re.compile(r"[0-9a-z]+")
 

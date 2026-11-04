@@ -20,11 +20,22 @@ import shutil
 import subprocess
 import sys
 
+# Windows では標準出力が cp932・CRLF になり、呼び出す bash が日本語と行末を読み違える。
+# UTF-8・LF に揃える（pj-platform.sh の冒頭）
+if os.name == "nt":
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", newline="\n")
+
 HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, "Projects")
 RECOMMEND = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "skills", "pj", "scripts", "pj-recommend.py")
-# brew の cask は /Applications、管理者権限の無い端末（orca-install-user.sh）は ~/Applications
+# brew の cask は /Applications、管理者権限の無い Mac（orca-install-user.sh）は ~/Applications、
+# Windows（orca-install-windows.ps1）は %LOCALAPPDATA%\Programs\orca
 ORCA_FALLBACKS = [d + "/Orca.app/Contents/Resources/bin/orca" for d in ("/Applications", os.path.join(HOME, "Applications"))]
+if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+    ORCA_FALLBACKS.append(os.path.join(os.environ["LOCALAPPDATA"], "Programs", "orca", "resources", "bin", "orca.exe"))
+# 子のプロセス（orca・git・pj-recommend.py）の出力は UTF-8 で読む。Windows の既定は cp932
+RUN = dict(capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def find_orca():
@@ -35,7 +46,7 @@ def find_orca():
 
 
 def orca_json(orca, *args):
-    out = subprocess.run([orca, *args, "--json"], capture_output=True, text=True, timeout=60)
+    out = subprocess.run([orca, *args, "--json"], timeout=60, **RUN)
     try:
         data = json.loads(out.stdout)
     except json.JSONDecodeError:
@@ -45,14 +56,14 @@ def orca_json(orca, *args):
 
 def default_targets():
     """pj の索引にあるフォルダを、属する git リポジトリの最上位にまとめる。"""
-    rels = subprocess.run([sys.executable, RECOMMEND, "list"],
-                          capture_output=True, text=True, check=True).stdout.split("\n")
+    rels = subprocess.run([sys.executable, RECOMMEND, "list"], check=True, **RUN).stdout.split("\n")
     roots = []
     for rel in filter(None, (r.strip() for r in rels)):
-        out = subprocess.run(["git", "-C", os.path.join(PROJECTS, rel), "rev-parse", "--show-toplevel"],
-                             capture_output=True, text=True)
-        top = out.stdout.strip()
-        if out.returncode or not top.startswith(PROJECTS + os.sep) or "/.claude/worktrees/" in top:
+        out = subprocess.run(["git", "-C", os.path.join(PROJECTS, rel), "rev-parse", "--show-toplevel"], **RUN)
+        # Windows の git は C:/… を返すので、区切りを OS の形に揃えてから比べる
+        top = os.path.normpath(out.stdout.strip()) if out.stdout.strip() else ""
+        if out.returncode or not top.startswith(PROJECTS + os.sep) \
+                or os.sep.join(("", ".claude", "worktrees", "")) in top:
             continue
         r = os.path.relpath(top, PROJECTS)
         if r not in roots:

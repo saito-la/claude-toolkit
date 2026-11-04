@@ -27,7 +27,9 @@
 
 set -uo pipefail
 
-target="${1:-}"
+source "$(dirname "${BASH_SOURCE[0]}")/pj-platform.sh"
+
+target="$(pj_posix "${1:-}")"
 [[ -n "$target" && -d "$target" ]] || { printf '%s\n' "$target"; exit 0; }
 
 # 以降どこで失敗しても、対象ディレクトリを返して起動は続けさせる
@@ -39,6 +41,7 @@ fallback() { printf '%s\n' "$target"; exit 0; }
 note() { { printf 'pj: %s\n' "$*" > /dev/tty; } 2>/dev/null; return 0; }
 
 repo="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || fallback
+repo="$(pj_posix "$repo")"
 [[ -n "$repo" ]] || fallback
 
 # 既に worktree の中なら入れ子にしない。そのまま使う。
@@ -46,6 +49,7 @@ repo="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || fallback
 # --git-common-dir は cwd からの相対パス（`../.git` 等）を返すことがあり、
 # 素の文字列比較だと本体を worktree と誤判定する（2026-08-26 に踏んだ）。
 git_dir="$(git -C "$target" rev-parse --absolute-git-dir 2>/dev/null)" || fallback
+git_dir="$(pj_posix "$git_dir")"
 common_dir="$(cd "$target" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)" || fallback
 [[ -n "$git_dir" && -n "$common_dir" ]] || fallback
 [[ "$git_dir" == "$common_dir" ]] || fallback
@@ -57,19 +61,8 @@ wt_root="$repo/.claude/worktrees"
 
 # --- 稼働中の claude セッションの cwd 一覧 -----------------------------------
 #
-# `pgrep -x claude` は使わない。取りこぼす（2026-09-02 の実測で、稼働中の
-# セッション自身の pid を落とした。原因は pgrep が自分の祖先を既定で除外すること
-# で、-a で含められる）。`ps` で全プロセスを見て comm のベース名で拾う。
-# comm には空白を含むパスが入り得るので $2 では切らない。
-# 所要は実測 0.05 秒（4セッション）で、pj の 3 秒予算に収まる。
-live_cwds() {
-  local pids
-  pids="$(ps -Ao pid=,comm= 2>/dev/null \
-    | awk '{ pid=$1; $1=""; sub(/^ +/,""); n=$0; sub(/.*\//,"",n); if (n=="claude") print pid }' \
-    | tr '\n' ',' | sed 's/,$//')"
-  [[ -n "$pids" ]] || return 0
-  lsof -a -d cwd -p "$pids" -Fn 2>/dev/null | sed -n 's/^n//p'
-}
+# 取り方（Mac は ps と lsof、Windows は ~/.claude/sessions と tasklist）は pj-platform.sh。
+live_cwds() { pj_live_cwds; }
 
 # パス $1 が $2 自身かその配下か（"$repo-other" を "$repo" の配下と誤判定しない）
 under() { [[ "$1" == "$2" || "$1" == "$2"/* ]]; }
@@ -94,6 +87,7 @@ reclaim() {
   git -C "$repo" show-ref --verify --quiet "refs/heads/$default_branch" || return 0
 
   while read -r wt; do
+    wt="$(pj_posix "$wt")"   # git は Windows で C:/… を返す
     [[ -n "$wt" && -d "$wt" ]] || continue
     # pj が作った置き場（.claude/worktrees/）のものだけを回収する。Orca などほかの道具が作った
     # worktree は、その道具が持ち主で、エージェントを止めているだけの空の作業場もある。

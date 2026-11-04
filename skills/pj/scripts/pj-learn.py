@@ -25,10 +25,17 @@ Usage:
 """
 import json
 import os
+import platform
 import pathlib
 import subprocess
 import sys
 import time
+
+# Windows では標準出力が cp932・CRLF になり、呼び出す bash が日本語と行末を読み違える。
+# UTF-8・LF に揃える（pj-platform.sh の冒頭）
+if os.name == "nt":
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", newline="\n")
 
 # 保存先。複数の端末で学習を共有したいときは、git の外で同期される置き場を環境変数
 # PJ_STATE_DIR に指す（指した先の親フォルダが無ければ既定へ戻る）。既定は ~/.local/state/pj。
@@ -44,7 +51,10 @@ STATE_DIR = pathlib.Path(os.path.expanduser(_ENV)) if _ENV and pathlib.Path(os.p
 # 積み上がって同期されないまま気づかない状態になる。
 # 端末名は LocalHostName を小文字にしたもの。nodename は接続先の逆引き DNS で変わり、
 # 別の機体として新しいファイルを作ってしまうため使わない。
+# Windows には scutil も os.uname も無いので COMPUTERNAME を使う。
 def _machine_name():
+    if os.name == "nt":
+        return (os.environ.get("COMPUTERNAME") or platform.node() or "windows").lower()
     try:
         n = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True).stdout.strip()
     except OSError:

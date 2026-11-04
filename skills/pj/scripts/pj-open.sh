@@ -35,6 +35,10 @@
 # 終了コード: 0=起動成功 / 1=引数不正 / 2=プロジェクト不在
 set -euo pipefail
 
+# Mac と Windows（Git Bash）の差は pj-platform.sh が吸収する。Windows では iTerm2 の代わりに
+# Windows Terminal の新しい窓で開く（下の「Windows」。2026-11-04、311C4W991 で検証）
+source "$(dirname "${BASH_SOURCE[0]}")/pj-platform.sh"
+
 PROJECTS="$HOME/Projects"
 
 relpath=""
@@ -117,6 +121,46 @@ fi
 
 if (( dry_run )); then
   printf '%s\n' "$launch_dir"
+  exit 0
+fi
+
+# ---- Windows：Windows Terminal の新しい窓で開く ----
+# 起動の手順は .ps1 に書いて PowerShell に読ませる。依頼文も作業フォルダも、コマンドの文字列や
+# 引数に埋め込まない（Git Bash からネイティブの exe へ渡す引数は、非 ASCII が崩れることがある）。
+# .ps1 は BOM 付きの UTF-8 で書き、Windows PowerShell 5.1 でも日本語のパスを読めるようにする。
+# claude が終われば窓も閉じる（Mac の `exec claude` と同じ。開いたままのシェルが作業フォルダを
+# 掴んでいると、wt-finish.sh が worktree を消せない）
+if (( PJ_WIN )); then
+  psq() { local s="${1//\'/\'\'}"; printf "'%s'" "$s"; }   # PowerShell の単一引用符の文字列
+  launcher="$(mktemp "${TMPDIR:-/tmp}/pj-open-XXXXXX").ps1"
+  {
+    printf '\xEF\xBB\xBF'
+    printf 'Remove-Item -LiteralPath $PSCommandPath -ErrorAction SilentlyContinue\n'
+    printf '%s\n' "$PJ_PS_CLEAN_ENV"
+    printf 'Set-Location -LiteralPath %s\n' "$(psq "$(pj_win "$launch_dir")")"
+    printf '$Host.UI.RawUI.WindowTitle = %s\n' "$(psq "claude: $relpath")"
+    if [[ -n "$prompt_file" ]]; then
+      pf="$(psq "$(pj_win "$prompt_file")")"
+      # 読んだ直後に消す。claude は起動時に引数を受け取るので、消しても依頼文は失われない
+      printf '$p = Get-Content -Raw -Encoding utf8 -LiteralPath %s\n' "$pf"
+      printf 'Remove-Item -LiteralPath %s -ErrorAction SilentlyContinue\n' "$pf"
+      if (( continue_session )); then printf 'claude -c $p\n'; else printf 'claude $p\n'; fi
+    else
+      if (( continue_session )); then printf 'claude -c\n'; else printf 'claude\n'; fi
+    fi
+  } > "$launcher"
+  shell_exe="pwsh.exe"; command -v pwsh.exe >/dev/null 2>&1 || shell_exe="powershell.exe"
+  win_launcher="$(pj_win "$launcher")"
+  if command -v wt.exe >/dev/null 2>&1; then
+    wt.exe -w new --title "claude: $relpath" "$shell_exe" -NoLogo -ExecutionPolicy Bypass -File "$win_launcher" >/dev/null 2>&1 &
+  else
+    cmd.exe //c start "" "$shell_exe" -NoLogo -ExecutionPolicy Bypass -File "$win_launcher" >/dev/null 2>&1 &
+  fi
+  disown 2>/dev/null || true
+  if [[ -n "$learn_query" ]]; then
+    python3 "$(dirname "${BASH_SOURCE[0]}")/pj-learn.py" record "$learn_query" "$relpath" >/dev/null 2>&1 || true
+  fi
+  echo "→ $relpath を Windows Terminal の新しい窓で起動しました${prompt_file:+（依頼文を渡した）}" >&2
   exit 0
 fi
 

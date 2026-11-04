@@ -27,6 +27,12 @@ import pathlib
 import re
 import sys
 
+# Windows では標準出力が cp932・CRLF になり、呼び出す bash が日本語と行末を読み違える。
+# UTF-8・LF に揃える（pj-platform.sh の冒頭）
+if os.name == "nt":
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", newline="\n")
+
 HOME = pathlib.Path.home()
 PROJECTS = HOME / "Projects"
 CACHE_DIR = HOME / ".cache" / "pj"
@@ -155,7 +161,7 @@ def build_entries(paths):
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel = str(p.parent.relative_to(PROJECTS))
+        rel = p.parent.relative_to(PROJECTS).as_posix()
         purpose, boundary = extract(parse_sections(text))
         fm = parse_frontmatter(text)
         entries.append({
@@ -279,7 +285,7 @@ def cmd_suggest_frontmatter(filter_substr=""):
         fm = parse_frontmatter(text)
         if fm.get("domain"):
             continue  # 既に routing 用 frontmatter 投入済み → 対象外
-        rel = str(p.parent.relative_to(PROJECTS))
+        rel = p.parent.relative_to(PROJECTS).as_posix()
         if filter_substr and filter_substr.lower() not in rel.lower():
             continue
         purpose, boundary = extract(parse_sections(text))
