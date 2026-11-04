@@ -40,7 +40,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）6件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）7件：
 
 | スキル | 内容 |
 |---|---|
@@ -50,6 +50,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [mcp-setup](skills/mcp-setup/SKILL.md) | Claude CodeへのMCPサーバー接続・セットアップ手順を案内 |
 | [format-prompt](skills/format-prompt/SKILL.md) | 粗いプロンプトを7ブロックの型に整形 |
 | [rescue-session](skills/rescue-session/SKILL.md) | API Error で続けられなくなったセッションの JSONL から、指示・報告・ツール実行結果を読める Markdown に回収 |
+| [speaker-script](skills/speaker-script/SKILL.md) | 読み原稿の md（1スライド1節・開始の目安の時刻つき）から、iPad で読む読み原稿＋残り時間のタイマーの HTML を作る。デッキの発表者ノートにも同じ md を使える |
 
 **個別プロジェクト配置**（用途が特定プロジェクトに閉じるため、グローバルには置かない）5件：
 
@@ -117,6 +118,7 @@ python3 vendor/claude-toolkit/install.py --label "<配布元の名前>"
 - `mcp-setup`・`format-prompt`・`meishi-rename`・`person-research`：追加依存なし（`person-research`はWebFetch/WebSearch・Agentツールを使用）
 - `schedule-reply`：Node.js, Playwright, 自分のGoogle OAuth認証情報（詳細はSKILL.md参照）
 - `email-to-calendar`：Gmail/Calendar MCPツール（環境に設定されたもの）。追加ソフトウェア依存なし
+- `speaker-script`：Python 3 の標準ライブラリだけ。画面は外部の読み込みの無い1枚の HTML
 
 ## その他のツール
 

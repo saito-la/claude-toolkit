@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>__TITLE__</title>
+<!-- speaker_script.py が読み原稿の md から組む、読み原稿と残り時間のタイマーの画面（iPad 向け）。__TITLE__・__DATA__・__TOTAL__ を差し替える -->
+<style>
+:root { --bg:#111; --panel:#1a1c20; --fg:#eee; --dim:#9aa0a6; --line:#2c2f34;
+  --ok:#7fd67f; --warn:#f2c14e; --bad:#ff6b6b; --accent:#4a90d9; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
+  font-family:-apple-system, "Hiragino Sans", sans-serif; }
+/* 原稿の欄が画面の残りをすべて使う。横置きでは時計・題・ボタンを左の列に縦に並べ、右は原稿だけにする */
+body { display:grid; height:100vh; height:100dvh; gap:10px 16px;
+  padding:max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  grid-template-columns:1fr; grid-template-rows:auto 1fr auto; grid-template-areas:"side" "body" "nav"; }
+#side { grid-area:side; display:flex; flex-direction:column; gap:8px; }
+#body { grid-area:body; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
+nav { grid-area:nav; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+@media (orientation: landscape) {
+  body { grid-template-columns:210px 1fr; grid-template-rows:1fr auto; grid-template-areas:"side body" "nav body"; }
+}
+/* 全画面のとき、ブラウザが左上に出す「✕」を避ける */
+body.fs #side { padding-top:52px; }
+
+/* 時計 */
+.clock { background:var(--panel); border-radius:12px; padding:10px 12px 12px; }
+#remain { font-size:54px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1; letter-spacing:-1px; }
+#remain.warn { color:var(--warn); } #remain.bad { color:var(--bad); }
+.bar { height:6px; background:#2c2f34; border-radius:3px; margin:10px 0 8px; overflow:hidden; }
+#barfill { height:100%; width:0; background:var(--accent); }
+#barfill.warn { background:var(--warn); } #barfill.bad { background:var(--bad); }
+.kv { display:flex; justify-content:space-between; align-items:baseline; font-size:18px; color:var(--dim); line-height:1.6; font-variant-numeric:tabular-nums; }
+.kv b { color:var(--fg); font-weight:600; }
+#pace { display:inline-block; margin-top:6px; font-size:17px; font-weight:700; padding:3px 10px; border-radius:999px; background:#26292e; color:var(--dim); }
+#pace:empty { display:none; }
+#pace.ahead { color:#0d1f0d; background:var(--ok); } #pace.behind { color:#2a0b0b; background:var(--bad); }
+
+/* スライド */
+.slide { padding:2px 2px 0; }
+#count { font-size:16px; color:var(--dim); font-variant-numeric:tabular-nums; }
+#ttl { font-size:21px; font-weight:700; line-height:1.35; margin-top:2px; }
+
+/* 原稿 */
+#body p { margin:0 0 .4em; line-height:1.5; }
+#body p:last-child { margin-bottom:0; }
+
+/* ボタン */
+nav button { font-size:18px; height:48px; border-radius:10px; border:1px solid #3a3d42; background:#24272c; color:var(--fg); }
+nav button:active { filter:brightness(1.3); }
+#full { grid-column:1 / span 2; height:40px; font-size:16px; color:var(--dim); }
+nav .big { height:72px; font-size:26px; font-weight:700; background:#1d3557; border-color:#2f5d8a; }
+#start.run { background:#3a2a10; border-color:#7a5a20; }
+@media (orientation: portrait) { nav { grid-template-columns:repeat(5, 1fr); } #full { grid-column:auto; height:48px; } nav .big { height:48px; } }
+</style>
+</head>
+<body>
+<div id="side">
+  <div class="clock">
+    <div id="remain">20:00</div>
+    <div class="bar"><div id="barfill"></div></div>
+    <div class="kv"><span>経過</span><span><b id="elapsed">0:00</b> / <span id="total"></span></span></div>
+    <div class="kv"><span>目安</span><b id="target"></b></div>
+    <span id="pace"></span>
+  </div>
+  <div class="slide">
+    <div id="count"></div>
+    <div id="ttl"></div>
+  </div>
+</div>
+<main id="body"></main>
+<nav>
+  <button id="start">開始</button>
+  <button id="reset">リセット</button>
+  <button id="full">全画面</button>
+  <button id="prev" class="big">◀</button>
+  <button id="fwd" class="big">▶</button>
+</nav>
+<script>
+const S = __DATA__;          // [{n, title, start(秒), text}]
+const TOTAL = __TOTAL__;     // 秒
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('script:' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('script:' + k, JSON.stringify(v)); } catch (e) {} }
+};
+let i = store.get('i', 0), t0 = store.get('t0', null), paused = store.get('paused', 0);
+// 原稿が欄に収まるまで、上限 FS_MAX から文字を自動で小さくする
+const FS_MAX = 44, FS_MIN = 15;
+const fmt = s => { const a = Math.abs(Math.round(s)); return (s < 0 ? '−' : '') + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0'); };
+const elapsed = () => t0 === null ? paused : paused + (Date.now() - t0) / 1000;
+$('total').textContent = fmt(TOTAL);
+
+function fit() {
+  const b = $('body');
+  let fs = FS_MAX;
+  b.style.fontSize = fs + 'px';
+  while (fs > FS_MIN && b.scrollHeight > b.clientHeight + 1) { fs -= 1; b.style.fontSize = fs + 'px'; }
+}
+function show() {
+  i = Math.max(0, Math.min(S.length - 1, i)); store.set('i', i);
+  const s = S[i];
+  $('count').textContent = s.n + ' / ' + S.length;
+  $('ttl').textContent = s.title;
+  $('body').innerHTML = '';
+  s.text.split(/\n\s*\n/).forEach(p => { const e = document.createElement('p'); e.textContent = p.trim(); $('body').append(e); });
+  $('body').scrollTop = 0;
+  $('target').textContent = fmt(s.start);
+  fit(); tick();
+}
+function tick() {
+  const e = elapsed(), r = TOTAL - e, s = S[i], nx = S[i + 1];
+  const level = r < 60 ? 'bad' : r < 180 ? 'warn' : '';
+  $('remain').textContent = fmt(r);
+  $('remain').className = level;
+  $('barfill').className = level;
+  $('barfill').style.width = Math.min(100, e / TOTAL * 100) + '%';
+  $('elapsed').textContent = fmt(e);
+  // 遅れ：次のスライドの開始の目安を過ぎてもまだこのスライドにいる／早い：このスライドの目安より前に来た
+  const pace = $('pace');
+  if (t0 === null && paused === 0) { pace.textContent = ''; pace.className = ''; }
+  else if (nx && e > nx.start) { pace.textContent = fmt(e - nx.start) + ' 遅れ'; pace.className = 'behind'; }
+  else if (e < s.start) { pace.textContent = fmt(s.start - e) + ' 早い'; pace.className = 'ahead'; }
+  else { pace.textContent = '予定どおり'; pace.className = 'ahead'; }
+  $('start').textContent = t0 === null ? (paused ? '再開' : '開始') : '一時停止';
+  $('start').className = t0 === null ? '' : 'run';
+}
+
+$('prev').onclick = () => { i--; show(); };
+$('fwd').onclick = () => { i++; show(); };
+$('start').onclick = () => {
+  if (t0 === null) { t0 = Date.now(); } else { paused = elapsed(); t0 = null; }
+  store.set('t0', t0); store.set('paused', paused); tick(); wake();
+};
+$('reset').onclick = () => {
+  if (!confirm('タイマーを0に戻し、1枚目に戻しますか？')) return;
+  t0 = null; paused = 0; i = 0; store.set('t0', t0); store.set('paused', 0); show();
+};
+// 全画面：使えるブラウザ（iPad の Safari・Chrome は要素の全画面に対応する版がある）だけで効く
+$('full').onclick = () => {
+  const d = document.documentElement, on = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (on) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else if (d.requestFullscreen) d.requestFullscreen();
+    else if (d.webkitRequestFullscreen) d.webkitRequestFullscreen();
+    else alert('このブラウザは全画面に対応していません。Safari の共有メニューから「ホーム画面に追加」して開いてください。');
+  } catch (e) {}
+};
+function onFs() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  document.body.classList.toggle('fs', on);
+  $('full').textContent = on ? '全画面を終える' : '全画面';
+  fit();
+}
+addEventListener('resize', fit);
+document.addEventListener('fullscreenchange', onFs);
+document.addEventListener('webkitfullscreenchange', onFs);
+
+// 画面が消えないようにする（Safari 16.4 以降）
+let lock = null;
+async function wake() { try { if ('wakeLock' in navigator && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => lock = null); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
+
+show(); wake();
+setInterval(tick, 500);
+</script>
+</body>
+</html>
