@@ -1,12 +1,12 @@
 ---
 name: pj
-description: 「別のプロジェクトで作業したい」「〇〇のプロジェクトを開いて」「この続きは△△でやりたい」と言われたときに、会話の文脈から ~/Projects の中の最適な既存プロジェクトを判断し、Orca が動いていれば Orca の作業場、無ければ新規 iTerm2 ウィンドウをそのディレクトリで開いて claude を起動する。今のウィンドウはそのまま残る。/pj でも呼べる。
+description: 「別のプロジェクトで作業したい」「〇〇のプロジェクトを開いて」「この続きは△△でやりたい」と言われたときに、会話の文脈から ~/Projects の中の最適な既存プロジェクトを判断し、Orca が動いていれば Orca の作業場、無ければ新規 iTerm2 ウィンドウ（Windows では Windows Terminal）をそのディレクトリで開いて claude を起動する。今のウィンドウはそのまま残る。/pj でも呼べる。
 argument-hint: <プロジェクト名や作業内容>（省略時は会話の文脈から判断）
 ---
 
 # pj
 
-今いる Claude セッションの中から「別のプロジェクトで作業を始めたい」と伝えられたときに、①現在のセッションの文脈で最適な既存プロジェクトを判断し、②新規 iTerm2 ウィンドウをそのディレクトリで開いて `claude` を新規起動するスキル。今のウィンドウはそのまま残る。Orca が動いている Mac では、iTerm2 の窓の代わりに Orca の作業場を作って起動する（`pj-open.sh` が `pj-orca.sh` へ渡す。Orca の入れ方は claude-toolkit の `tools/orca/README.md`）。
+今いる Claude セッションの中から「別のプロジェクトで作業を始めたい」と伝えられたときに、①現在のセッションの文脈で最適な既存プロジェクトを判断し、②新規 iTerm2 ウィンドウ（Windows では Windows Terminal）をそのディレクトリで開いて `claude` を新規起動するスキル。今のウィンドウはそのまま残る。Orca が動いている端末では、新しい窓の代わりに Orca の作業場を作って起動する（`pj-open.sh` が `pj-orca.sh` へ渡す。Orca の入れ方は claude-toolkit の `tools/orca/README.md`）。
 
 使う人は常にどこかの Claude セッションの中におり、シェルからプロジェクトを開き直す手間を省くための入口を Claude 側に用意するのが本スキル。
 
@@ -16,7 +16,7 @@ argument-hint: <プロジェクト名や作業内容>（省略時は会話の文
 
 ## 前提
 
-- Mac で使う。開く先は Orca（動いていれば）か iTerm2。どちらも無い端末では開かない
+- Mac と Windows（Git Bash）で使う。開く先は Orca（動いていれば）か、Mac は iTerm2、Windows は Windows Terminal。Windows での違いは `README.md`「9. Windows」
 - 行き先の候補は `~/Projects` の下で `CLAUDE.md` を持つフォルダ（深さ5まで）。`CLAUDE.md` の「目的」「切り分け／使い分け」の節と、先頭の frontmatter（`aliases` など）が索引になる。`.pjignore` を置いたフォルダは候補から外れる
 - 索引は `~/.cache/pj/`、選んだ文の学習は `~/.local/state/pj/`（環境変数 `PJ_STATE_DIR` で変えられる）に置く。学習にはクエリ文がそのまま残るので、git には入れない
 
@@ -120,11 +120,11 @@ action-items.md の最優先事項を実施して
 
 - `<relpath>` は必ず `pj-go.sh` の出力（CANDIDATES/CATALOG）に実在する `path` を一字一句そのまま使う。創作・改変しない。
 - 索引に無いプロジェクトは開けない（`CLAUDE.md` が索引の要件）。`CATALOG` に見当たらないのに存在するはずだとユーザーが言う場合、そのフォルダに `CLAUDE.md` が無い可能性を伝える。
-- `pj-open.sh` は Orca が動いていれば Orca の作業場で、動いていなければ iTerm2（`osascript` で新規ウィンドウを作る）で開く。どちらも無い端末では開かない。
+- `pj-open.sh` は Orca が動いていれば Orca の作業場で、動いていなければ Mac は iTerm2（`osascript` で新規ウィンドウを作る）、Windows は Windows Terminal で開く。どちらも無い端末では開かない。
 - 機密プロジェクト（frontmatter `confidential: true`）を候補提示する際も、`purpose`/`boundary` の要約以上の内容はチャットに展開しない。
 
 ## worktree
 
-同じリポジトリで claude を2つ動かすと git のインデックスを共有し、片方の `git add` にもう片方の変更が混ざる。そのため iTerm2 で開くときは、そのリポジトリの本体で claude が動いていなければ本体で、動いていれば `.claude/worktrees/<名前>/`（ブランチ `wt/<名前>`）に worktree を作って開く（`pj-worktree.sh`）。Orca は作業場ごとに worktree を作る。
+同じリポジトリで claude を2つ動かすと git のインデックスを共有し、片方の `git add` にもう片方の変更が混ざる。そのため新しい窓で開くときは、そのリポジトリの本体で claude が動いていなければ本体で、動いていれば `.claude/worktrees/<名前>/`（ブランチ `wt/<名前>`）に worktree を作って開く（`pj-worktree.sh`）。Orca は作業場ごとに worktree を作る。
 
 worktree で始めたセッションは、終えるときに `bash "$SKILL/scripts/wt-finish.sh"` で既定ブランチへ統合し、worktree とブランチを片付ける（未コミットがあれば止まる。`--dry-run` で先に見られる）。セッション終了の手順（`guides/SESSION-END.md`「worktree セッション」）がこれを呼ぶ。中身の無いまま残った `.claude/worktrees/` の worktree は、次に pj で開くときに回収される。

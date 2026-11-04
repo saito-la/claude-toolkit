@@ -9,10 +9,12 @@
 ### 1.1. スクリプト
 
 - `scripts/pj-go.sh`：`/pj` の高速パス。索引の更新、判定、DIRECT なら即起動までを1回で行う
-- `scripts/pj-open.sh`：起動の部品。Orca が動いていれば `pj-orca.sh` へ渡し、無ければ osascript で新しい iTerm2 の窓を開いて `claude` を起動する
+- `scripts/pj-open.sh`：起動の部品。Orca が動いていれば `pj-orca.sh` へ渡し、無ければ新しい窓（Mac は osascript で iTerm2、Windows は Windows Terminal）を開いて `claude` を起動する
 - `scripts/pj-orca.sh`：Orca の作業場で起動する。新規、`claude --resume` での再開（`--resume`）、動いている端末を前に出す（`--focus`）の3つ
-- `scripts/pj-worktree.sh`：iTerm2 で開くときに、本体が埋まっていれば worktree へ振り替える。空のまま残った worktree を回収する
+- `scripts/pj-platform.sh`：Mac と Windows の差をまとめた部品。ほかの bash のスクリプトが読み込む（9章）
+- `scripts/pj-worktree.sh`：新しい窓で開くときに、本体が埋まっていれば worktree へ振り替える。空のまま残った worktree を回収する
 - `scripts/wt-finish.sh`：worktree（pj のもの・Orca の作業場）の成果を既定ブランチへ統合し、片付ける
+- `scripts/wt-cleanup-later.sh`：Windows で、worktree の中の claude が終わってから片付ける（9章）
 - `scripts/pj-router.py`：判定の本体（`route`）と、開いた先へ渡す依頼文を作る `request`
 - `scripts/pj-recommend.py`：索引・カタログ・プロジェクト一覧の単一情報源（`index`・`catalog`・`list`・`--suggest-frontmatter`）
 - `scripts/pj-ngram.py`：文字N-gram の類似度。単体でも叩ける
@@ -131,3 +133,19 @@ related: [紛らわしい近傍プロジェクトの relpath]
 - 誤って憶えた：`python3 scripts/pj-learn.py forget "文言" <relpath>`
 - 新しい `CLAUDE.md` を作ったのに出てこない：`python3 scripts/pj-recommend.py index --rebuild`
 - 出てこないプロジェクトがある：そのフォルダに `CLAUDE.md` が無い。作業拠点なら足し、作業拠点でないなら `.pjignore` を置いて意図して外す
+
+## 9. Windows
+
+### 9.1. 対応の範囲
+
+- Git Bash の上で、Mac と同じスクリプトを動かす。差は `scripts/pj-platform.sh` が吸収し、Mac の動きは変えない。2026-11-04 に `311C4W991` で、索引・判定・Windows Terminal と Orca での起動・worktree の振り替えと回収・片付けを確かめた
+- 要るのは Git for Windows（Git Bash・`cygpath`）、Python 3、PowerShell（pwsh、無ければ Windows PowerShell）、Windows Terminal。Orca は `tools/orca/README.md`「2.3. Windows」で入れる
+- 直近セッションの継続（`-c`）と pj リンクは、まだ Windows で試していない
+
+### 9.2. 違う作り
+
+- 窓：Windows Terminal の新しい窓で、起動用の `.ps1` を PowerShell に実行させる。Orca の作業場でも、端末で同じ `.ps1` を実行する（Orca のエージェント起動は使わない）。依頼文と作業フォルダはコマンドの文字列にも引数にも埋め込まず、`.ps1` がファイルから読む。Git Bash からネイティブの exe へ渡す引数は、非 ASCII が崩れることがあるため
+- 受け継いだ変数：`.ps1` は、今のセッションから受け継いだ `CLAUDE_*`・`AI_AGENT` を外してから claude を起動する。Windows の窓と Orca は起動元の環境を受け継ぐので、Claude Code の中から開くと `CLAUDE_CODE_CHILD_SESSION` が残り、開いた先が子のセッション扱いになって記録を残さない（2026-11-04 に「Transcript saving is off」で確認）。利用者やマシンの環境変数に置いた `CLAUDE_*` は外さない
+- 稼働中のセッション：Git Bash の `ps` は MSYS のプロセスしか見えず、`lsof` も無い。Claude Code が稼働中のセッションを作業フォルダごと書く `~/.claude/sessions/<pid>.json` を読み、`tasklist` でまだ動いている pid に絞る
+- パスの形：git は `C:/…`、`$HOME` は `/c/…` を返すので、比べる前に `cygpath` で揃える。Python の標準出力は既定で cp932・CRLF になり、bash が日本語と行末を読み違えるので、UTF-8・LF に揃える
+- 片付け：動いているプロセスの作業フォルダは消せない。`wt-finish.sh` は統合と push までを行い、worktree とブランチの片付けは `wt-cleanup-later.sh` を切り離して起動して任せる。それは worktree の中の claude がすべて終わるのを待ち（最長24時間）、未コミットも origin に無いコミットも無いことを確かめ直してから消す。Orca の作業場は Orca に消させ（端末のシェルも止まる）、1回目で消えなければ間を置いてやり直す。記録は `~/.cache/pj/wt-cleanup.log`

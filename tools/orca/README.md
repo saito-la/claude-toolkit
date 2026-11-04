@@ -31,9 +31,21 @@ bash <このフォルダ>/orca-install-user.sh
 
 GitHub の配布物を取り、署名と公証を確かめて `~/Applications/Orca.app` に置き、`orca` を `~/.local/bin` に張る。GUI へ `ORCA_TELEMETRY_DISABLED=1` と、TLS を傍受する網なら `NODE_EXTRA_CA_CERTS` を渡す LaunchAgent（`com.saito.orca-env`）を入れる。最後に Orca を起動し、リポジトリを登録する。何度実行しても同じ状態になる。初回は Orca の画面で確認を求められることがあり、そのときは画面で済ませてからもう一度実行する。
 
+### 2.3. Windows
+
+```powershell
+pwsh -NoProfile -File <このフォルダ>/orca-install-windows.ps1
+```
+
+管理者権限は要らない。GitHub の `orca-windows-setup.exe` を取り、Authenticode の署名（SignPath Foundation）を確かめて `/S` で入れる。入る先は `%LOCALAPPDATA%\Programs\orca` で、`orca` CLI はその `resources\bin` にあり、利用者の PATH に足す。利用者の環境変数 `ORCA_TELEMETRY_DISABLED=1` を置き、最後に Orca を起動してリポジトリを登録する。何度実行しても同じ状態になる。
+
+- TLS の傍受への対処は、利用者の環境変数（`NODE_EXTRA_CA_CERTS` か `NODE_OPTIONS=--use-system-ca`）がそのまま Orca に受け継がれる。Mac の LaunchAgent に当たるものは要らない
+- Claude Code の中から Orca を起動すると、Orca が `CLAUDE_CODE_CHILD_SESSION` などを受け継ぎ、Orca の画面から開いた claude が記録を残さない。スクリプトはそれらを外して起動する。手で起動するならスタートメニューから起動する
+- 作業場は Mac と同じく `~/orca/workspaces/<リポジトリ>/<名前>` に置かれる。pj から開くときの違いは `skills/pj/README.md`「9. Windows」
+
 ## 3. 画面での設定
 
-入れたら Orca の画面で次を行う。設定は端末ごとに持つ。
+入れたら Orca の画面で次を行う。設定は端末ごとに持つ。初回の起動で「デフォルトの Agent を選択」が出たら Claude を選び、Yolo モードはオフのままにする（1 と同じ理由）。
 
 1. Settings → Agents → Permissions を「Each agent's own settings」にする。既定の Full access は Claude Code を `--dangerously-skip-permissions` で起動し、確認なしで何でも実行させる。各エージェントの設定（Claude Code は `settings.json` の `permissions.defaultMode`）に従わせ、権限の決まりを Orca 側に二つ目として持たない。Bypass Permissions の確認画面が出たら No, exit を選ぶ
 2. Settings → Git & Source Control で、作業場を作るときに元のブランチを最新にする設定をオンにする
@@ -52,5 +64,5 @@ pj の索引（`~/Projects` の下で `CLAUDE.md` を持つフォルダ）を gi
 
 ## 5. 使い方
 
-- 作業を始めるときは pj（「〇〇のプロジェクトを開いて」、`/pj`）を使う。Orca が動いていれば Orca の作業場で claude が起動し、動いていなければ iTerm2 で開く
+- 作業を始めるときは pj（「〇〇のプロジェクトを開いて」、`/pj`）を使う。Orca が動いていれば Orca の作業場で claude が起動し、動いていなければ iTerm2（Windows では Windows Terminal）で開く
 - 作業を終えるときは、作業場の中のセッションで「セッションを終わります」と言う。セッション終了の手順が `skills/pj/scripts/wt-finish.sh` を呼び、作業場の成果を既定ブランチへ統合して push し、作業場とブランチを片付ける

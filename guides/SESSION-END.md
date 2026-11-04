@@ -97,4 +97,4 @@ cwd が `.claude/worktrees/<名前>/` 配下（pj が本体の埋まっている
 
 - 他の Step は通常どおり
 
-統合が終わると cwd（worktree）は消えるため、そのウィンドウはそれ以上使えない。閉じてよい。Orca の画面からは作業場が次の更新で消える。
+統合が終わると cwd（worktree）は消えるため、そのウィンドウはそれ以上使えない。閉じてよい。Orca の画面からは作業場が次の更新で消える。Windows では使用中のフォルダを消せないので、`wt-finish.sh` は統合と push までを行い、worktree の片付けはその claude が終わった後に裏で行う（`~/.claude/skills/pj/README.md`「9. Windows」）。Step 6 まで済ませたら、claude を終えるよう伝える
