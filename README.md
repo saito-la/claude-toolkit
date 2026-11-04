@@ -40,7 +40,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）7件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）8件：
 
 | スキル | 内容 |
 |---|---|
@@ -51,6 +51,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [format-prompt](skills/format-prompt/SKILL.md) | 粗いプロンプトを7ブロックの型に整形 |
 | [rescue-session](skills/rescue-session/SKILL.md) | API Error で続けられなくなったセッションの JSONL から、指示・報告・ツール実行結果を読める Markdown に回収 |
 | [speaker-script](skills/speaker-script/SKILL.md) | 読み原稿の md（1スライド1節・開始の目安の時刻つき）から、iPad で読む読み原稿＋残り時間のタイマーの HTML を作る。デッキの発表者ノートにも同じ md を使える |
+| [claude-usage](skills/claude-usage/SKILL.md) | セッション記録から端末ごとの使用時間・VS Code と CLI の割合・並行数・依頼の数・トークンを CSV に書き出し、複数端末分をまとめて集計 |
 
 **個別プロジェクト配置**（用途が特定プロジェクトに閉じるため、グローバルには置かない）5件：
 
