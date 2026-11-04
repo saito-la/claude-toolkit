@@ -187,14 +187,14 @@ def load_or_build(rebuild=False):
     fp = fingerprint(paths)
     if not rebuild and CACHE.exists():
         try:
-            data = json.loads(CACHE.read_text())
+            data = json.loads(CACHE.read_text(encoding="utf-8"))
             if data.get("fingerprint") == fp:
                 return data["entries"]
         except (OSError, ValueError):
             pass
     entries = build_entries(paths)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps({"fingerprint": fp, "entries": entries}, ensure_ascii=False))
+    CACHE.write_text(json.dumps({"fingerprint": fp, "entries": entries}, ensure_ascii=False), encoding="utf-8")
     return entries
 
 
