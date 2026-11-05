@@ -198,7 +198,7 @@ run_in() {  # <worktree> <command>
   if (( PJ_WIN )); then
     if command -v pwsh.exe >/dev/null 2>&1; then sh=(--shell pwsh.exe); else sh=(--shell powershell.exe); fi
   fi
-  "$ORCA" terminal create --worktree "path:$1" --title claude "${sh[@]}" --command "$2" --focus --json >/dev/null 2>&1 \
+  "$ORCA" terminal create --worktree "path:$1" --title claude ${sh[@]+"${sh[@]}"} --command "$2" --focus --json >/dev/null 2>&1 \
     || { echo "pj-orca.sh: 端末の起動に失敗した（作業場は残っている: $1）" >&2; return 1; }
 }
 
