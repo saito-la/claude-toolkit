@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>__TITLE__</title>
+<!-- discussant_cards.py が手元メモの md から組む、演題ごとの質疑のカードと演題のタイマーの画面（iPad 向け）。__TITLE__・__DATA__・__TALK__・__QA__ を差し替える。見た目は speaker-script の script-view.html に揃えている -->
+<style>
+:root { --bg:#111; --panel:#1a1c20; --fg:#eee; --dim:#9aa0a6; --line:#2c2f34;
+  --ok:#7fd67f; --warn:#f2c14e; --bad:#ff6b6b; --accent:#4a90d9; --mine:#c58af9; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
+  font-family:-apple-system, "Hiragino Sans", sans-serif; }
+body { display:grid; height:100vh; height:100dvh; gap:10px 16px;
+  padding:max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  grid-template-columns:1fr; grid-template-rows:auto auto auto 1fr auto; grid-template-areas:"tabs" "side" "head" "body" "nav"; }
+#tabs { grid-area:tabs; display:flex; gap:6px; overflow-x:auto; }
+#side { grid-area:side; display:flex; flex-direction:column; gap:8px; }
+#head { grid-area:head; }
+#body { grid-area:body; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
+nav { grid-area:nav; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+@media (orientation: landscape) {
+  body { grid-template-columns:220px 1fr; grid-template-rows:auto auto 1fr auto;
+    grid-template-areas:"side tabs" "side head" "side body" "nav body"; }
+}
+body.fs #side { padding-top:52px; }
+
+/* タブ */
+#tabs button { flex:0 0 auto; font-size:17px; padding:8px 12px; border-radius:10px; border:1px solid #3a3d42; background:#24272c; color:var(--dim); }
+#tabs button.mine { border-color:var(--mine); color:var(--mine); }
+#tabs button.on { background:#1d3557; border-color:#2f5d8a; color:var(--fg); font-weight:700; }
+#tabs button.on.mine { background:#3b2353; border-color:var(--mine); }
+
+/* 時計 */
+.clock { background:var(--panel); border-radius:12px; padding:10px 12px 12px; }
+#phase { font-size:17px; font-weight:700; color:var(--dim); }
+#phase.qa { color:var(--warn); } #phase.over { color:var(--bad); }
+#remain { font-size:50px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.05; letter-spacing:-1px; }
+#remain.qa { color:var(--warn); } #remain.over { color:var(--bad); }
+.bar { height:6px; background:#2c2f34; border-radius:3px; margin:8px 0; overflow:hidden; display:flex; }
+#bartalk { height:100%; background:var(--accent); width:0; } #barqa { height:100%; background:var(--warn); width:0; }
+.kv { display:flex; justify-content:space-between; align-items:baseline; font-size:17px; color:var(--dim); line-height:1.6; font-variant-numeric:tabular-nums; }
+.kv b { color:var(--fg); font-weight:600; }
+
+/* カードの見出し */
+#gtitle { font-size:20px; font-weight:700; line-height:1.3; }
+#gtag { display:inline-block; margin-left:8px; font-size:15px; padding:2px 8px; border-radius:999px; background:#3b2353; color:var(--mine); vertical-align:2px; }
+#gtag:empty { display:none; }
+#ctitle { font-size:16px; color:var(--dim); margin-top:2px; font-variant-numeric:tabular-nums; }
+
+/* カード */
+#body p { margin:0 0 .5em; line-height:1.45; }
+#body p.ja { font-size:.62em; color:var(--dim); line-height:1.5; }
+#body ul { margin:0 0 .5em; padding-left:1.1em; line-height:1.45; }
+body.noja #body .ja { display:none; }
+
+/* ボタン */
+nav button, .tools button { font-size:18px; height:48px; border-radius:10px; border:1px solid #3a3d42; background:#24272c; color:var(--fg); }
+nav button:active, .tools button:active, #tabs button:active { filter:brightness(1.3); }
+.tools { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.tools button { height:44px; font-size:16px; }
+#start.run { background:#3a2a10; border-color:#7a5a20; }
+nav .big { height:72px; font-size:26px; font-weight:700; background:#1d3557; border-color:#2f5d8a; }
+@media (orientation: portrait) { nav .big { height:56px; } }
+</style>
+</head>
+<body>
+<div id="side">
+  <div class="clock">
+    <div id="phase">開始前</div>
+    <div id="remain">7:00</div>
+    <div class="bar"><div id="bartalk"></div><div id="barqa"></div></div>
+    <div class="kv"><span>予定</span><b id="sched">—</b></div>
+    <div class="kv"><span>現在</span><b id="now"></b></div>
+  </div>
+  <div class="tools">
+    <button id="start">発表開始</button>
+    <button id="reset">戻す</button>
+    <button id="ja">訳を隠す</button>
+    <button id="full">全画面</button>
+  </div>
+</div>
+<div id="tabs"></div>
+<div id="head"><div><span id="gtitle"></span><span id="gtag"></span></div><div id="ctitle"></div></div>
+<main id="body"></main>
+<nav>
+  <button id="prev" class="big">◀</button>
+  <button id="fwd" class="big">▶</button>
+</nav>
+<script>
+const G = __DATA__;          // [{title, time, tag, cards:[{title, text}]}]
+const TALK = __TALK__, QA = __QA__;   // 秒
+const $ = id => document.getElementById(id);
+const KEY = 'cards:' + document.title + ':';
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(KEY + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(KEY + k, JSON.stringify(v)); } catch (e) {} }
+};
+let g = store.get('g', 0), c = store.get('c', 0), starts = store.get('starts', {});
+const fmt = s => { const a = Math.abs(Math.round(s)); return (s < 0 ? '+' : '') + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0'); };
+const hm = d => d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');
+const short = t => t.split(/\s+/)[0];
+
+// タブ：演題の番号（題の最初の語）。札のある演題は色を変える
+G.forEach((x, k) => {
+  const b = document.createElement('button');
+  b.textContent = short(x.title);
+  if (x.tag) b.classList.add('mine');
+  b.onclick = () => { g = k; c = 0; show(); };
+  $('tabs').append(b);
+});
+
+const FS_MAX = 46, FS_MIN = 15;
+function fit() {
+  const b = $('body');
+  let fs = FS_MAX;
+  b.style.fontSize = fs + 'px';
+  while (fs > FS_MIN && b.scrollHeight > b.clientHeight + 1) { fs -= 1; b.style.fontSize = fs + 'px'; }
+}
+// 段落：全体が（…）なら訳、「- 」の行は箇条書き
+function paint(text) {
+  const b = $('body'); b.innerHTML = '';
+  text.split(/\n\s*\n/).forEach(p => {
+    p = p.trim(); if (!p) return;
+    const lines = p.split('\n');
+    if (lines.every(l => /^\s*[-*] /.test(l) || /^\s{2,}\S/.test(l))) {
+      const ul = document.createElement('ul');
+      lines.forEach(l => { if (/^\s*[-*] /.test(l)) { const li = document.createElement('li'); li.textContent = l.replace(/^\s*[-*] /, ''); ul.append(li); } else if (ul.lastChild) ul.lastChild.textContent += ' ' + l.trim(); });
+      b.append(ul); return;
+    }
+    const e = document.createElement('p');
+    const t = lines.map(l => l.trim()).join(' ');
+    e.textContent = t;
+    if (/^（[\s\S]*）$/.test(t)) e.className = 'ja';
+    b.append(e);
+  });
+}
+function show() {
+  g = Math.max(0, Math.min(G.length - 1, g));
+  const x = G[g];
+  c = Math.max(0, Math.min(x.cards.length - 1, c));
+  store.set('g', g); store.set('c', c);
+  [...$('tabs').children].forEach((b, k) => b.classList.toggle('on', k === g));
+  $('tabs').children[g].scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  $('gtitle').textContent = x.title;
+  $('gtag').textContent = x.tag;
+  const card = x.cards[c] || { title: '', text: '' };
+  $('ctitle').textContent = card.title + (x.cards.length > 1 ? '　' + (c + 1) + ' / ' + x.cards.length : '');
+  paint(card.text);
+  $('body').scrollTop = 0;
+  $('sched').textContent = x.time || '—';
+  fit(); tick();
+}
+// 演題ごとのタイマー：発表 TALK 秒 → 質疑 QA 秒 → 超過
+function tick() {
+  $('now').textContent = hm(new Date());
+  const t0 = starts[g];
+  const ph = $('phase'), rm = $('remain');
+  if (t0 == null) {
+    ph.textContent = '開始前'; ph.className = ''; rm.textContent = fmt(TALK); rm.className = '';
+    $('bartalk').style.width = 0; $('barqa').style.width = 0;
+    $('start').textContent = '発表開始'; $('start').className = '';
+    return;
+  }
+  const e = (Date.now() - t0) / 1000, tot = TALK + QA;
+  if (e < TALK) { ph.textContent = '発表 残り'; ph.className = ''; rm.textContent = fmt(TALK - e); rm.className = ''; }
+  else if (e < tot) { ph.textContent = '質疑 残り'; ph.className = 'qa'; rm.textContent = fmt(tot - e); rm.className = 'qa'; }
+  else { ph.textContent = '超過'; ph.className = 'over'; rm.textContent = fmt(tot - e); rm.className = 'over'; }
+  $('bartalk').style.width = Math.min(e, TALK) / tot * 100 + '%';
+  $('barqa').style.width = Math.max(0, Math.min(e, tot) - TALK) / tot * 100 + '%';
+  $('start').textContent = '止める'; $('start').className = 'run';
+}
+
+$('prev').onclick = () => { if (c > 0) c--; else if (g > 0) { g--; c = G[g].cards.length - 1; } show(); };
+$('fwd').onclick = () => { if (c < G[g].cards.length - 1) c++; else if (g < G.length - 1) { g++; c = 0; } show(); };
+$('start').onclick = () => {
+  if (starts[g] == null) starts[g] = Date.now(); else delete starts[g];
+  store.set('starts', starts); tick(); wake();
+};
+$('reset').onclick = () => {
+  if (!confirm('すべての演題のタイマーを消し、最初のカードに戻しますか？')) return;
+  starts = {}; g = 0; c = 0; store.set('starts', starts); show();
+};
+let noja = store.get('noja', false);
+function applyJa() { document.body.classList.toggle('noja', noja); $('ja').textContent = noja ? '訳を出す' : '訳を隠す'; }
+$('ja').onclick = () => { noja = !noja; store.set('noja', noja); applyJa(); fit(); };
+$('full').onclick = () => {
+  const d = document.documentElement, on = document.fullscreenElement || document.webkitFullscreenElement;
+  try {
+    if (on) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else if (d.requestFullscreen) d.requestFullscreen();
+    else if (d.webkitRequestFullscreen) d.webkitRequestFullscreen();
+    else alert('このブラウザは全画面に対応していません。Safari の共有メニューから「ホーム画面に追加」して開いてください。');
+  } catch (e) {}
+};
+function onFs() {
+  const on = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  document.body.classList.toggle('fs', on);
+  $('full').textContent = on ? '全画面を終える' : '全画面';
+  fit();
+}
+addEventListener('resize', fit);
+document.addEventListener('fullscreenchange', onFs);
+document.addEventListener('webkitfullscreenchange', onFs);
+let lock = null;
+async function wake() { try { if ('wakeLock' in navigator && !lock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => lock = null); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); });
+
+applyJa(); show(); wake();
+setInterval(tick, 500);
+</script>
+</body>
+</html>
