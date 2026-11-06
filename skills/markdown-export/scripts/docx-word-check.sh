@@ -11,13 +11,14 @@
 # アクセスの許可ダイアログを出さないため）。元の docx には触れない。Word が一瞬前面に出る。
 set -euo pipefail
 in="${1:?usage: docx-word-check.sh <input.docx> [output.pdf]}"
-out="${2:-${in%.docx}.pdf}"
+ext="${in##*.}"
+out="${2:-${in%.*}.pdf}"
 [[ -d "/Applications/Microsoft Word.app" ]] || { echo "Microsoft Word が見つかりません" >&2; exit 1; }
 work="$HOME/Library/Containers/com.microsoft.Word/Data/tmp/docx-word-check.$$"
 mkdir -p "$work"
 trap 'rm -rf "$work"' EXIT
-cp "$in" "$work/in.docx"
-pages=$(osascript - "$work/in.docx" "$work/out.pdf" <<'APPLESCRIPT'
+cp "$in" "$work/in.$ext"   # 拡張子を保つ（.doc を .docx の名前で開くと Word が開けない）
+pages=$(osascript - "$work/in.$ext" "$work/out.pdf" <<'APPLESCRIPT'
 on run argv
 	set inPath to item 1 of argv
 	set outPath to item 2 of argv
