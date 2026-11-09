@@ -17,8 +17,11 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [session-end-auto-file-move](conventions/session-end-auto-file-move.md) | セッション終了時のテンポラリファイル自動移動ポリシー |
 | [email-draft-conventions](conventions/email-draft-conventions.md) | メール返信下書きの起案作法（起案フロー・下書きの単一性・スレッドと引用・宛先の決め方・送信前の確認） |
 | [email-address-ledger](conventions/email-address-ledger.md) | 確認済みメールアドレスの索引の持ち方（既定はプロジェクトの `CLAUDE.md` に箇条書き・育てば CSV へ） |
+| [case-record-single-location](conventions/case-record-single-location.md) | 案件（出張・イベント・治験など）の情報を1案件1フォルダに集める置き場の決め方 |
+| [secret-handling](conventions/secret-handling.md) | APIキー・トークン・パスワードを画面にもリポジトリにも出さない扱い方 |
+| [numbering-starts-at-one](conventions/numbering-starts-at-one.md) | 人が読む番号は1から始め、0番を作らない |
 
-配置は `install.py` が行う（下記「インストール」）。グローバル `~/.claude/CLAUDE.md` に「作業種別ごとの規約は `~/.claude/conventions/` が正本。着手前に該当ファイルを読む」の1行を置くと、Claude が作業種別に応じて読みに行く。取り込みは任意。
+配置は `install.py` が行う（下記「インストール」）。`instructions/principles.md` を `~/.claude/CLAUDE.md` から読み込むと、その「作業種別ごとの規約」の節に従って、Claude が作業種別に応じて読みに行く。
 
 ### メール規約の使い方
 
@@ -54,14 +57,14 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [claude-usage](skills/claude-usage/SKILL.md) | セッション記録から端末ごとの使用時間・VS Code と CLI の割合・並行数・依頼の数・トークンを CSV に書き出し、複数端末分をまとめて集計 |
 | [pj](skills/pj/SKILL.md) | 作業内容の文から ~/Projects の行き先を選び、Orca の作業場か新しい窓（Mac は iTerm2、Windows は Windows Terminal）で claude を起動する。worktree の統合（wt-finish.sh）も持つ |
 
-**個別プロジェクト配置**（用途が特定プロジェクトに閉じるため、グローバルには置かない）5件：
+**用途が特定の業務に閉じるもの**（これも `install.py` が `~/.claude/skills/` へ置く）4件：
 
-| スキル | 内容 | 配置先の目安 |
+| スキル | 内容 | 使う場面 |
 |---|---|---|
 | [email-to-calendar](skills/email-to-calendar/SKILL.md) | 開催案内メールから日時・場所・URLを抽出しGoogleカレンダーへ登録。差出人別ルールを自己蓄積し継続利用で精度向上（要・`RULES.example.md`を`RULES.md`にコピー） | 秘書業務を行うプロジェクト（例：CRPC秘書業務） |
-| [schedule-reply](skills/schedule-reply/SKILL.md) | 日程調整メール(tonton/調整さん)にGoogleカレンダーの空きで自動回答（要・個別セットアップ、上級者向け） | 同上 |
+| [schedule-reply](skills/schedule-reply/SKILL.md) | 日程調整メール(tonton/調整さん/よていくん)にGoogleカレンダーの空きで自動回答（要・個別セットアップ、上級者向け） | 同上 |
 | [meishi-rename](skills/meishi-rename/SKILL.md) | 名刺スキャンPDFのファイル名をOCR結果から整形 | 名刺整理を行うプロジェクト |
-| [person-research](skills/person-research/SKILL.md) | 人物調査URLからレジストリを横断調査し根拠付きレポートを作成 | 個人環境ラッパー（command版）から参照される汎用ロジック。単体配置は通常不要 |
+| [person-research](skills/person-research/SKILL.md) | 人物調査URLからレジストリを横断調査し根拠付きレポートを作成 | 面談の前などに人物を調べるとき |
 
 ## インストール
 
@@ -70,11 +73,11 @@ git clone <このリポジトリ> ~/claude-toolkit
 python3 ~/claude-toolkit/install.py
 ```
 
-`install.py` が `skills/`・`conventions/`・`guides/`・`instructions/`・`hooks/`・`tools/statusline/statusline.py` を `~/.claude/` へ配置し、`settings.json` に `statusLine` を追記する（既に設定済みなら壊さない）。POSIX では symlink、Windows では権限の都合でコピーになる。
+`install.py` が `~/.claude/` へ配置し、`settings.json` に `statusLine` を追記する（既に設定済みなら壊さない）。POSIX では symlink、Windows では権限の都合でコピーになる。
 
-`hooks/` は Google Chat への完了通知と Markdown 見出しの規約検査で、置いただけでは動かない。完了通知は Webhook を設定した端末でだけ `install.py` が `settings.json` に登録し、見出しの検査は各自が登録する。詳細は [hooks/README.md](hooks/README.md)。
+何を配置するかは `install.py` 冒頭の「配置するもの」が正本。`hooks/` の中身と登録のしかたは [hooks/README.md](hooks/README.md) が正本。
 
-配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。`instructions/` だけは置くだけでは読まれず、`~/.claude/CLAUDE.md` に `@instructions/<名前>` を足して初めて効く（必要な行はインストーラが最後に表示する）。
+配置後、Claude Codeが会話の文脈（「Wordにして」「PDFにして」等）から自動的にスキルを発見する。`instructions/` だけは置くだけでは読まれず、`~/.claude/CLAUDE.md` に `@instructions/<名前>` があって初めて効く。CLAUDE.md が無ければインストーラが @行を書いて作り、あれば足りない行を表示する。
 
 ### 更新
 
@@ -107,7 +110,7 @@ python3 vendor/claude-toolkit/install.py --label "<配布元の名前>"
 
 1台のマシンに配布元が複数ある場合（正本 clone と、配布リポジトリの submodule が同居する場合）、**後から走った別の配布元による上書きは中止される。** 参照先が配布用スナップショットへ倒れると、正本を編集しても submodule を bump するまで反映されなくなるため。意図した切り替えなら `--force`、動作確認なら `HOME=$(mktemp -d) python3 install.py` でホームを分ける。
 
-**個別プロジェクト配置**は上記グローバル標準に含めない。該当プロジェクトの `.claude/skills/<name>/` へ個別にsymlinkする。
+次の2つは、配置のあとに個別のセットアップが要る。
 
 - `schedule-reply` は Google Calendar/Gmail への書き込み・自動送信を伴うため、配置後も `skills/schedule-reply/scripts/README.md` に沿った個別セットアップ（`config.json`作成・Google認証・Playwright）が別途必要。
 - `email-to-calendar` は初回のみ `skills/email-to-calendar/RULES.example.md` を同ディレクトリの `RULES.md` にコピーして使い始める（差出人別ルールが蓄積されるファイルのため`.gitignore`済み）。
@@ -129,6 +132,7 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 | ツール | 内容 |
 |---|---|
 | [orca](tools/orca/README.md) | 複数のエージェントを並べて動かす Orca の入れ方（管理者権限の無い Mac・Windows を含む）・画面での設定・リポジトリの登録 |
+| [dropbox-mcp](tools/dropbox-mcp/README.md) | Dropbox の MCP サーバーの自前実装。ダウンロードはディスクへ保存し、会話にはパス・サイズ・sha256 だけを返す |
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |
 | [title-url-bookmarklet](tools/title-url-bookmarklet/README.md) | 現在開いているページの「タイトル + 改行 + URL」をクリップボードにコピーするブックマークレット |

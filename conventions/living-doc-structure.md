@@ -41,7 +41,7 @@
 
 ### 履歴・凍結記録の分離
 
-- **next action・未解決事項は `action-items.md`** に分離（→ [[20260531-action-items-convention]]）。生き文書側には「未確認事項と次アクションは action-items を参照」と1行だけ残す
+- **next action・未解決事項は `action-items.md`** に分離（→ [[action-items-convention]]）。生き文書側には「未確認事項と次アクションは action-items を参照」と1行だけ残す
 - point-in-time の凍結記録（議事録・調査スナップショット・過去版）は `snapshots/` か日付プレフィックスの別ファイルへ
 - 方針・計画の記録は日付プレフィックスの別ファイル（`YYYYMMDD_plan_*.md` 等）に保存し、生き文書からは参照のみ
 - **訂正履歴を本文に残さない**：`~~旧記載~~ → 訂正後` のような取り消し線・Before/After形式を本文中に溜めない。訂正したら本文は最終形（正しい内容）だけにする。経緯を残す必要があれば文書末尾の別セクション（例：「更新履歴」）か、`log.md` 等の別文書に置き、本文はどの時点で読んでも現在の正しい状態だけが読める状態を保つ
@@ -60,11 +60,7 @@
   attachments/       # バイナリ原本（gitignore）
 ```
 
-## CLAUDE.md への参照追加
-
-グローバル `~/.claude/CLAUDE.md` の「指示の原則」に、本規約へのポインタを1行追加し全プロジェクトに適用する。
-
 ## 関連
 
-- [[20260531-action-items-convention]]：next action の分離先 `action-items.md` の規約
+- [[action-items-convention]]：next action の分離先 `action-items.md` の規約
 - 説明・打診資料の見出し作法（名詞句のみ）と同根

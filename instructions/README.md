@@ -1,6 +1,6 @@
 # instructions
 
-`~/.claude/CLAUDE.md` に `@import` で取り込むグローバル指示の断片。インストーラが `~/.claude/instructions/` へ配置する。**配置しただけでは読まれない**——取り込むかどうかは各自の判断で、`~/.claude/CLAUDE.md` に次のような行を足すと有効になる。
+`~/.claude/CLAUDE.md` に `@import` で取り込むグローバル指示の断片。インストーラが `~/.claude/instructions/` へ配置する。**配置しただけでは読まれず**、`~/.claude/CLAUDE.md` に次のような行があって初めて有効になる。CLAUDE.md が無ければインストーラが作り、あれば書き換えずに足りない行を表示する（取り込むかは各自の判断）。
 
 ```markdown
 @instructions/language.md

@@ -32,22 +32,13 @@ md ファイルを送るときは `scripts/md-to-notes.py` を使う。既定は
 
 ## フォントサイズ
 
-2026-10-02 の実測では、Notes は取り込み時に `font-size` を縮小せず、指定の px をそのまま保った（28px・34px の指定が 28px・34px のまま残った）。そのため `scripts/md-to-notes.py` は承認済みのサイズ（本文19px・見出し23px）を直接指定している。下の表は、縮小が起きていた時期（〜2026-08）の実測で、手で HTML を書くときは読み戻した `font-size` を見てどちらの挙動かを確かめる。
-
-Notesは取り込み時にインライン `font-size` を**縮小して正規化**する。実測の対応：
-
-| HTML指定 | Notes反映（iPhoneで読みやすい承認済みサイズ） |
-|---|---|
-| `font-size:28px` | 本文 **19px** |
-| `font-size:34px` | 見出し・タイトル **23px** |
-
-→ **本文は `font-size:28px`、見出し・タイトルは `font-size:34px`＋`<b>`** で指定すれば、ユーザーが「OK」とした読みやすいサイズ（本文19px／見出し23px）が再現される。デフォルトのまま送ると小さすぎる（過去の不満点）ので必ずこの指定を付ける。
+本文19px・見出し23px（iPhone で読みやすいと承認済みの大きさ）を直接指定する。値の正本は `scripts/md-to-notes.py` の `BODY_PX`・`HEAD_PX` で、声に出して読む台本は `--scale 1.5` にする。2026-10-02 の実測で、Notes は指定の px をそのまま保つ（〜2026-08 は縮めて取り込んでいたので、28px・34px で指定していた）。手で HTML を書いたときは、読み戻した `font-size` で確かめる。
 
 ## HTMLテンプレート
 
 ```html
-<div style="font-size:28px; line-height:1.55;">
-<div style="font-size:34px;"><b>【タイトル＝1行目】</b></div>
+<div style="font-size:19px; line-height:1.55;">
+<div style="font-size:23px;"><b>【タイトル＝1行目】</b></div>
 <br>
 <b>■セクション見出し</b><br>
 本文行1<br>
