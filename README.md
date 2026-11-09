@@ -43,7 +43,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）9件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）10件：
 
 | スキル | 内容 |
 |---|---|
@@ -55,6 +55,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [rescue-session](skills/rescue-session/SKILL.md) | API Error で続けられなくなったセッションの JSONL から、指示・報告・ツール実行結果を読める Markdown に回収 |
 | [speaker-script](skills/speaker-script/SKILL.md) | 読み原稿の md（1スライド1節・開始の目安の時刻つき）から、iPad で読む読み原稿＋残り時間のタイマーの HTML を作る。デッキの発表者ノートにも同じ md を使える |
 | [claude-usage](skills/claude-usage/SKILL.md) | セッション記録から端末ごとの使用時間・VS Code と CLI の割合・並行数・依頼の数・トークンを CSV に書き出し、複数端末分をまとめて集計 |
+| [assistant](skills/assistant/SKILL.md) | 秘書の仕組みのエンジン。台帳（`action-items.md`）・予定表・Gmail・作業用の Google ドキュメントから、その日にやることを優先順に並べた today.md を作る。使い手ごとの設定と出力はインスタンスのフォルダ（`assistant.json`）に置き、そこで「init」「update」と言うと動く（要・Google の OAuth クライアント） |
 | [pj](skills/pj/SKILL.md) | 作業内容の文から ~/Projects の行き先を選び、Orca の作業場か新しい窓（Mac は iTerm2、Windows は Windows Terminal）で claude を起動する。worktree の統合（wt-finish.sh）も持つ |
 
 **用途が特定の業務に閉じるもの**（これも `install.py` が `~/.claude/skills/` へ置く）4件：
