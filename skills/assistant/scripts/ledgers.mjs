@@ -8,7 +8,10 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { homedir } from 'os';
-import { join, relative } from 'path';
+import { join, relative, sep } from 'path';
+
+// 台帳のパスは today.md の参照と pj リンクに使うので、Windows でも / で区切る
+const relPath = (from, to) => relative(from, to).split(sep).join('/');
 
 export const PROJECTS = join(homedir(), 'Projects');
 // 台帳のファイル名。規約（action-items-convention.md）は対象ごとに分けた <topic>_action_items.md も認める
@@ -65,7 +68,7 @@ export function collectWaiting(root = PROJECTS, paths = walkLedgers(root)) {
       if (!m) return;
       const addrs = m[1].split(/[,、]/).map((a) => a.replace(/[`\s]/g, '')).filter(Boolean);
       out.push({
-        path: relative(root, p), line: i + 1, addrs, since: m[2], count: m[3] ? Number(m[3]) : 1,
+        path: relPath(root, p), line: i + 1, addrs, since: m[2], count: m[3] ? Number(m[3]) : 1,
         next: parseNext(raw),
         text: raw.replace(/^\s*- \[[ !]\]\s+/, '').trim(),
       });

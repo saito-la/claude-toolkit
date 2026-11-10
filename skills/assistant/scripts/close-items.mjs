@@ -19,10 +19,13 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { instance, expandHome, PROJECTS } from './lib/instance.mjs';
 
 const ARCHIVE = expandHome(instance().cfg.archiveScript);
 const APPLY = process.argv.includes('--apply');
+// Windows の Python の公式の導入は python3 を作らない（python と py だけ）
+const PYTHON = process.platform === 'win32' ? 'python' : 'python3';
 const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -83,7 +86,7 @@ const touched = new Map();
 for (const [abs, f] of byFile) {
   if (!f.items.length) continue;
   writeFileSync(abs, f.lines.join('\n'));
-  execFileSync('python3', [ARCHIVE, abs], { stdio: 'inherit' });
+  execFileSync(PYTHON, [ARCHIVE, abs], { stdio: 'inherit' });
   const it = f.items[0];
   if (!it.tracked) { console.log(`・${it.path} は git 管理外。退避までで止める`); continue; }
   if (!touched.has(it.repo)) touched.set(it.repo, []);
@@ -101,5 +104,5 @@ for (const [repo, files] of touched) {
 
 // 閉じて退避すると後ろの行の番号が詰まるので、today.md の参照をその場で合わせる
 try {
-  execFileSync('node', [new URL('./check-today.mjs', import.meta.url).pathname, '--fix'], { stdio: 'inherit' });
+  execFileSync(process.execPath, [fileURLToPath(new URL('./check-today.mjs', import.meta.url)), '--fix'], { stdio: 'inherit' });
 } catch { console.log('⚠ check-today.mjs が問題を報せた。上の出力を見て today.md を直す'); }

@@ -35,7 +35,7 @@
 
 import { readFileSync, writeFileSync, statSync, mkdirSync, existsSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { dirname, join, relative } from 'path';
+import { dirname, join, relative, sep } from 'path';
 import { classifyEventTitle } from './event-kind.mjs';
 import { conflictChecker, loadRules } from './conflicts.mjs';
 import { walkLedgers, collectWaiting } from './ledgers.mjs';
@@ -47,6 +47,9 @@ import { readMailFile } from './lib/mail-files.mjs';
 import { fetchHolidays } from './lib/holidays.mjs';
 import { judgeRule, loadMarks, MARKS_FILE, withRuleDefaults } from './notices.mjs';
 import { header, myAddresses, kindOf } from './lib/gmail-kind.mjs';
+
+// 台帳のパスは today.md の参照と pj リンクに使うので、Windows でも / で区切る
+const relPath = (from, to) => relative(from, to).split(sep).join('/');
 
 // ── 設定 ───────────────────────────────────────────────
 const INST = instance();
@@ -82,7 +85,7 @@ const arg = (name, fallback) => {
 const LEDGER_DAYS = parseInt(arg('--ledger-days', '30'), 10);
 // 明日以降を何日先までカレンダーで見るか。講義の準備（2週間前に着手）が見える長さにする
 const UPCOMING_DAYS = parseInt(arg('--upcoming-days', '21'), 10);
-// 使い手が話す側に立つかもしれない予定の目印（設定の prepPattern）。題名だけで付く候補で、話す役かは today.md を書く側が案内の本文で確かめる。準備の行が台帳に無いまま当日を迎えるのを防ぐ（2026-10-14、10/29 の講義の準備が抜けていた）
+// 使い手が話す側に立つかもしれない予定の目印（設定の prepPattern）。題名だけで付く候補で、話す役かは today.md を書く側が案内の本文で確かめる。準備の行が台帳に無いまま当日を迎えるのを防ぐ
 const PREP_PATTERN = new RegExp(CFG.prepPattern, 'i');
 
 const OUT_PATH = INST.file('data', 'candidates.json');
@@ -489,12 +492,11 @@ function collectLedgers(today) {
     const st = statSync(p);
     const lines = readFileSync(p, 'utf8').split('\n');
     // 鮮度を過ぎた台帳も、期日・待ち・[!] の未処理行があれば読む（目安だけの行では読まない）。止まっている台帳ほど見落とすと危ない
-    // （2026-10-21、09-03 から止まっていた PET-CT 受託の台帳が today.md に一度も出ていなかった）
     const stale = st.mtimeMs < cutoff;
     if (stale && !lines.some((l) => /^\s*- \[!\]\s+/.test(l) || (/^\s*- \[ \]\s+/.test(l) && (/待ち：/.test(l) || (EXTERNAL_DEADLINE_RE.test(l.replace(NOT_DEADLINE_RE, '')) && dateTokensOf(l).length))))) {
       skipped++;
       const open = lines.filter((l) => /^\s*- \[ \]\s+/.test(l)).length;
-      if (open) staleList.push({ path: relative(PROJECTS, p), mtime: new Date(st.mtimeMs).toISOString().slice(0, 10), staleDays: daysBetween(new Date(st.mtimeMs).toISOString().slice(0, 10), today), openCount: open });
+      if (open) staleList.push({ path: relPath(PROJECTS, p), mtime: new Date(st.mtimeMs).toISOString().slice(0, 10), staleDays: daysBetween(new Date(st.mtimeMs).toISOString().slice(0, 10), today), openCount: open });
       continue;
     }
     let section = null;
@@ -526,7 +528,7 @@ function collectLedgers(today) {
     });
     if (items.length) {
       ledgers.push({
-        path: relative(PROJECTS, p),
+        path: relPath(PROJECTS, p),
         mtime: new Date(st.mtimeMs).toISOString().slice(0, 10),
         ...(stale ? { stale: true, staleDays: daysBetween(new Date(st.mtimeMs).toISOString().slice(0, 10), today) } : {}),
         openCount: items.length,
@@ -607,8 +609,7 @@ function collectKeepInMind(today) {
 
 // ── 返事待ちの検知 ─────────────────────────────────────
 // 台帳の「待ち：<アドレス> <照会日>」を拾い、その相手から照会日以降にメールが来ていないかを Gmail で調べる。
-// 返事が届いたのに台帳が「待ち」のまま止まり、次の一手が自分に戻ったことが見えなくなるのを防ぐ
-// （2026-10-08。ある照会に担当者が答えていたのに、台帳は2か月「回答待ち」のままだった）。
+// 返事が届いたのに台帳が「待ち」のまま止まり、次の一手が自分に戻ったことが見えなくなるのを防ぐ。
 // 書式の正本は claude-toolkit の conventions/action-items-convention.md「返事待ちの行」。
 // 鮮度で除外した台帳も対象にする（待っている間は台帳が更新されないため）。
 
@@ -664,7 +665,7 @@ async function fetchBallReturned(paths) {
       if (!/^\s*- \[[ !]\]\s+/.test(raw)) return;
       for (const id of new Set([...raw.matchAll(GMAIL_ID_RE)].map((m) => m[1]))) {
         if (!rowsById.has(id)) rowsById.set(id, []);
-        rowsById.get(id).push({ path: relative(PROJECTS, p), line: i + 1, text: raw.replace(/^\s*- \[[ !]\]\s+/, '').trim() });
+        rowsById.get(id).push({ path: relPath(PROJECTS, p), line: i + 1, text: raw.replace(/^\s*- \[[ !]\]\s+/, '').trim() });
       }
     });
   }

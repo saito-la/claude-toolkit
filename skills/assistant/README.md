@@ -47,25 +47,7 @@
 
 ### 2.2. 開始時の収集のフック
 
-インスタンスの `.claude/settings.json` に次を置く。セッションを開くたびに候補を集め、要約を文脈に渡す。
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"; f=\"$HOME/.claude/skills/assistant/scripts/session-start.mjs\"; if [ -f \"$f\" ]; then node \"$f\"; else echo \"秘書の仕組みのエンジンがこの端末に無い。claude-toolkit の install.py を流してから開き直す\"; fi",
-            "timeout": 90
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+インスタンスの `.claude/settings.json` の `hooks.SessionStart` に、セッションを開くたびに候補を集めて要約を文脈に渡すフックを置く。本体は `scripts/session-start.mjs` で、フックはエンジンが無ければ入れ方を言うだけの1行である。1行の正本は `scripts/new-instance.mjs` の `HOOK` で、新しいインスタンスにはこのスクリプトが書く（3.3）。
 
 ### 2.3. スクリプトの呼び方
 
@@ -86,6 +68,7 @@
 - `notes-to-doc.mjs`・`notes-remove.mjs`：Apple Notes の捕捉用のノートを作業用の文書へ移す（`features.appleNotes`）
 - `notice-done.mjs`：勤務先への連絡をチャットや口頭で済ませた日を `attendance-notices.csv` に残す
 - `auth-google.mjs`：Google の資格情報を取る（3章）
+- `new-instance.mjs`：新しいインスタンスの骨組みを書く（3.3）。これだけはインスタンスの外から、フォルダを引数で渡して呼ぶ
 - `ledgers.mjs`：台帳を探し、返事待ちの行を読む。インスタンスの外の道具（受信メールの自動処理など）も import するので、設定を読まない。関数の形を変えるときは、import している道具も直す
 
 ## 3. 導入
@@ -114,10 +97,13 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 
 ### 3.3. インスタンス
 
-1. フォルダを作り、`assistant.json` を置く（4章）
-2. `.claude/settings.json` に開始時のフックを置く（2.2）
-3. 資格情報を取る（3.2）
-4. そのフォルダで claude を開き、「init」と言う。初回は前回の today.md が無いので、台帳の未処理の行をすべて1件ずつ確かめ、時間がかかる
+1. インスタンスのリポジトリを作る。持ち主は使い手にし、private にする（today.md にメールの件名と予定の題名が載る）。GitHub なら `cd ~/Projects && gh repo create planner --private --clone`
+2. 骨組みを書く：`node ~/.claude/skills/assistant/scripts/new-instance.mjs ~/Projects/planner --account <使い手のアドレス>`。`assistant.json`・`CLAUDE.md`・`.gitignore`・開始時のフックを、無いものだけ書く。それぞれの理由はスクリプトの冒頭
+3. 資格情報を取る（3.2）。骨組みの設定は、1つのファイル `.google-work.json` に `documents calendar.readonly gmail.readonly` を持たせる前提
+4. 作業用の文書と記録用の文書を、使い手の Google ドライブに Google ドキュメントで1つずつ作る。作業用の文書には見出し1の行 `# Capture`・`# Backlog`・`# 2w Schedule`・`# Sink` をこの順に置く（`docs/design.md`「作業用の文書のゾーン」）。それぞれの ID（URL の `/d/` と `/edit` の間）を `workDoc.id`・`logDoc.id` に入れる
+5. 設定を見直す（4章）。台帳を読む範囲（`ledgers.roots`・`ledgers.exclude`）と、送信済みから除く自動通知の件名。`features` は空から始め、使う機能だけを足す
+6. 確かめる：インスタンスのフォルダで `node ~/.claude/skills/assistant/scripts/collect.mjs` が警告なしで終わり、`data/candidates.json` に予定・Gmail・台帳が入ること。`doc-2w.mjs`（既定は dry-run）が転記する行を出すこと
+7. commit・push し、そのフォルダで claude を開いて「init」と言う。Orca を使うなら、リポジトリを登録すると「＋」から作業場を作れる（claude-toolkit の `tools/orca`）。初回は前回の today.md が無いので、台帳の未処理の行をすべて1件ずつ確かめ、時間がかかる
 
 ## 4. 設定
 
@@ -185,6 +171,26 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 
 ## 5. 動作環境
 
+### 5.1. 共通
+
 - Node.js 18 以上（`fetch` を使う）。外部のパッケージは使わない
-- Mac と Windows で動くように書く。ホームは `os.homedir()` で取り（PowerShell では `HOME` が未定義のことがある）、パスは `path.join` で組む。開始時の収集は bash と jq に頼らない
+- Mac と Windows で動くように書く。ホームは `os.homedir()` で取り（PowerShell では `HOME` が未定義のことがある）、パスは `path.join` で組む。today.md と台帳の参照に出すパスは Windows でも `/` で区切る。開始時の収集は bash と jq に頼らない
 - `features.appleNotes`・`features.pjLinks` は Mac だけで動く
+
+### 5.2. Windows
+
+- Node.js は `winget install OpenJS.NodeJS.LTS` で入れる。入れる前から開いていたターミナルと Claude Code には PATH が届かないので、開き直す
+- 開始時のフックは sh の書き方の1行（2.2）。Claude Code は Windows ではフックを Git Bash で動かすので、Git for Windows が要る
+- `close-items.mjs` は `archiveScript` を Python で呼ぶ。Windows では `python` を呼ぶ（Python の公式の導入は `python3` を作らない）
+- エンジンはコピーで置かれるので、claude-toolkit を pull したら `install.py` を流し直す（3.1）
+- 確かめていないこと：Windows での開始時のフックの実行、init と update の通し、`close-items.mjs` の Python の呼び出しと、参照のパスの `/` の区切り。Windows の使い手が初めて流すときに確かめ、この節を直す
+
+## 6. 改良するとき
+
+- エンジンのフォルダには実行の出力を書かない。スクリプトが書くのはインスタンスのフォルダだけにする
+- 設定の項目を足すときは、`scripts/lib/instance.mjs` の `DEFAULTS` に今の設定のままで動く既定値を足し、4章に書く。既定値を置けない項目は `need()` で止める
+- 使い手によって使わない機能は `features` で切る。手順書を使い手ごとに分けない
+- `scripts/ledgers.mjs` はインスタンスの外の道具も import する。設定を読む処理を入れず、関数の形を変えるときは import している道具も直す
+- 直したら、使い手のインスタンスで `collect.mjs --stdout` を直す前と後で流し、意図しない差が無いことを確かめる（実行時刻で変わる空き時間の分数などは除く）
+- このフォルダは公開される。使い手の仕事と生活の出来事（誰の何の予定・案件で何が起きたか）は書かない。決まりの理由は一般論で書く。仕組み自身の失敗（読み違い・漏れ）は、使い手の仕事の中身に触れずに書いてよい。人名・組織名・端末名・アカウントは例でも実在のものを使わない
+- 作業ログと、決まりの元になった出来事の記録は、このフォルダの外（使い手の private の置き場）に書く

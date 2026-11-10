@@ -47,7 +47,7 @@ const collected = c.status === 0
 
 const steps = [
   `${name}: 朝の一式は「init」、日中の更新は「update」（仕様 ${join(ENGINE, 'docs', 'daily-and-update.md')}）。`,
-  `日次ToDo の候補を収集しました（data/candidates.json を更新）。today.md を作る前に ${join(ENGINE, 'docs', 'design.md')}、このフォルダの overview.md（使い手固有の決まり。あれば）と data/candidates.json を読むこと。`,
+  `${c.status === 0 ? '日次ToDo の候補を収集しました（data/candidates.json を更新）' : '日次ToDo の候補の収集に失敗した（理由は末尾。data/candidates.json は前回のまま）'}。today.md を作る前に ${join(ENGINE, 'docs', 'design.md')}、このフォルダの overview.md（使い手固有の決まり。あれば）と data/candidates.json を読むこと。`,
   'エンジンのスクリプトはこのフォルダ（インスタンス）で実行する。エンジンのフォルダには何も書かない。',
   '期限候補は他の台帳と突合するまで「今日の期限」と断定しない。期限を過ぎた未完了の行（ledgers.overdue）は、突合のうえ「やること」の先頭に【期限超過】として出す。自分で決めた日付（目安。ledgers.aims）は期限として扱わず、優先順位の材料にだけ使う。「やること」は capacity に収まる量だけを見積付きで載せ、keepInMind はその直下の「意識しておく案件」に優先順で出す。',
   `載せる項目は前回の today.md を写さず、1件ずつ台帳の行・送信済みと予約送信（candidates.json の sent）・続報・${doc} の w で済んでいないかを確かめる（design.md「1件ずつの完了確認」）。`,
