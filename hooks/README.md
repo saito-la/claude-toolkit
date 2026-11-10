@@ -1,9 +1,9 @@
 # hooks
 
 作成日：2026-09-28
-改訂日：2026-10-23
+改訂日：2026-11-05
 
-Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査を収める。
+Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査、応答の言語の検査を収める。
 
 ## 配置と登録
 
@@ -19,6 +19,7 @@ Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。
 - 見出しの検査：`install.py` は登録しない。規約を機械で守らせたい範囲に応じて、ユーザーの `settings.json` か、プロジェクトの `.claude/settings.json` に自分で足す（下の「Markdown 見出しの検査」）
 - 送信の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「相手に届く送信の検査」）
 - 削除の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「削除の検査」）
+- 応答の言語の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「応答の言語の検査」）
 
 ## Google Chat への完了通知
 
@@ -196,4 +197,45 @@ python3 <claude-toolkit>/install.py      # webhook.env を置いたので、こ�
   "command": "f=\"$HOME/.claude/hooks/delete-guard.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"",
   "statusMessage": "削除の検査"
 }
+```
+
+## 応答の言語の検査
+
+### 仕組み
+
+`language-guard.py` は `instructions/language.md`（応答は日本語）を機械で守らせる。2つのイベントで呼ぶ。
+
+- `SessionStart`（matcher `compact`）：`language.md` を標準出力に出し、文脈の要約の直後に規則を入れ直す
+- `Stop`：そのターンの最終応答で、和文字が和文字と英字の合計の 25% 未満なら `decision: "block"` を返し、日本語で出し直させる。コードブロック・インラインコード・引用（`>` の行）・URL・パスは数えず、40字未満の応答は判定しない。出し直しの後（`stop_hook_active`）は止めない。そのターンの依頼に「英語で」「in English」等があれば検査しない
+
+### 経緯
+
+2026-11-05、ある1つのセッションで、文脈の要約の後に最終応答が3回英語になった。`language.md` は CLAUDE.md から読み込まれているが、要約は英語で書かれ、要約後の文脈の大半が英語の資料（メール・FHIR の JSON）になると、規則が埋もれて英語に引きずられる。規則の文を強めても同じ条件で再発するため、要約の直後に規則を入れ直す段と、出力の後に機械で止める段を足した。直近 40 セッションの 292 ターンで判定を試し、引っかかった 5 件はすべて実際に英語の最終応答だった。
+
+### 限界
+
+ツール呼び出しの間の文は見ない（出し直させても画面からは消えない）。思考（visible thinking）も見ない。英語の固有名詞と識別子が大半を占める短い日本語の応答は、英語と判定されることがある。
+
+### 登録
+
+```json
+"SessionStart": [
+  {
+    "matcher": "compact",
+    "hooks": [
+      { "type": "command", "command": "f=\"$HOME/.claude/hooks/language-guard.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" }
+    ]
+  }
+],
+"Stop": [
+  {
+    "hooks": [
+      {
+        "type": "command",
+        "command": "f=\"$HOME/.claude/hooks/language-guard.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"",
+        "statusMessage": "応答の言語の検査"
+      }
+    ]
+  }
+]
 ```
