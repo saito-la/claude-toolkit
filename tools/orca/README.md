@@ -1,6 +1,7 @@
 # Orca
 
 作成日：2026-11-04
+改訂日：2026-11-10
 
 ## 1. Orca の性質
 
@@ -48,8 +49,17 @@ pwsh -NoProfile -File <このフォルダ>/orca-install-windows.ps1
 入れたら Orca の画面で次を行う。設定は端末ごとに持つ。初回の起動で「デフォルトの Agent を選択」が出たら Claude を選び、Yolo モードはオフのままにする（1 と同じ理由）。
 
 1. Settings → Agents → Permissions を「Each agent's own settings」にする。既定の Full access は Claude Code を `--dangerously-skip-permissions` で起動し、確認なしで何でも実行させる。各エージェントの設定（Claude Code は `settings.json` の `permissions.defaultMode`）に従わせ、権限の決まりを Orca 側に二つ目として持たない。Bypass Permissions の確認画面が出たら No, exit を選ぶ
-2. Settings → Git & Source Control で、作業場を作るときに元のブランチを最新にする設定をオンにする
-3. 左の一覧の Workspace options で、Group by を None、Sort by を Agent Activity、Hide sleeping をオン、Except default branch をオフにする。動いている作業場だけが上にまとまり、登録したリポジトリの本体は隠れる
+2. Settings → Git & Source Control（日本語の表示は「Git とソース管理」）で「Keep local main up to date」（「ローカル main を最新の状態に保つ」）をオンにする。作業場を作るたびにリモートの元のブランチを取り直し、ローカルの main（master 等）を fast-forward する。そのブランチに未コミットの変更やローカルだけのコミットがあれば、更新を飛ばす
+3. 左の一覧の Workspace options（「ワークスペースのオプション」）で次のようにする。括弧内は日本語の表示
+   - Group by（グループ化）：None（なし）
+   - Sort by（並べ替え）：Agent Activity（Agent のアクティビティ）
+   - Hide sleeping（スリープ中を非表示）：オン
+   - Except default branch（デフォルトのブランチを除く）：オフ。Hide sleeping をオンにしたときだけ、その下に字下げして出る
+   - Hide default branch（デフォルトのブランチを非表示にする）：オフ。オフならデフォルトのブランチの行を一覧から外さない。「デフォルトのブランチを表示する」という名前の項目は無く、これをオフにするのがそれに当たる
+
+   この組み合わせでは、端末・ブラウザのタブ・エージェントのいずれかが開いている作業場だけが並ぶ。登録したリポジトリの本体（デフォルトのブランチ）の行も、何も開いていない間は隠れ、開くと現れる
+
+   項目名は stablyai/orca のソース（2026-11-09 のコミット a1734552）の英語と日本語の表示で確かめた
 4. 左下の「Add a setup script」は使わずに閉じてよい
 
 作業場の左の黄色い回る輪は、その作業場のエージェントのどれかが動いていることを示す。裏で動くサブエージェントが残っていても回り続け、フックが30分届かなければ止まる。
@@ -64,5 +74,6 @@ pj の索引（`~/Projects` の下で `CLAUDE.md` を持つフォルダ）を gi
 
 ## 5. 使い方
 
+- 初めて使うときは、左の一覧の上の「＋」（New workspace／新規ワークスペース）を押し、リポジトリに planner を選んで作業場を作り、そこで claude を起動する。planner の入手と渡し方は saito-la/assistant が決めており、ここには書かない
 - 作業を始めるときは pj（「〇〇のプロジェクトを開いて」、`/pj`）を使う。Orca が動いていれば Orca の作業場で claude が起動し、動いていなければ iTerm2（Windows では Windows Terminal）で開く
 - 作業を終えるときは、作業場の中のセッションで「セッションを終わります」と言う。セッション終了の手順が `skills/pj/scripts/wt-finish.sh` を呼び、作業場の成果を既定ブランチへ統合して push し、作業場とブランチを片付ける
