@@ -5,12 +5,21 @@
 // notification/reply email often quotes an old thread that contained a poll URL; the
 // answer URL must appear in the email's own main message, not in the quoted part.
 
-const TOOLS = [
-  { name: 'tonton',   re: /https?:\/\/tonton\.amaneku\.com\/list\.php\?id=([A-Za-z0-9_]+)/i },
-  { name: 'nextonton', re: /https?:\/\/nextonton\.inotai\.net\/e\/([A-Za-z0-9_-]+)/i },
-  { name: 'chousei',  re: /https?:\/\/chouseisan\.com\/s\?h=([0-9a-f]+)/i },
-  { name: 'yotei',    re: /https?:\/\/yotei-kun\.jp\/(?:s\/|#event\/)([A-Za-z0-9]+)/i },
+// The one list of supported tools. The Gmail search (searchQuery below) is built from `domain`,
+// so adding a tool here is all it takes — no per-machine config to update.
+export const TOOLS = [
+  { name: 'tonton',    domain: 'tonton.amaneku.com',   re: /https?:\/\/tonton\.amaneku\.com\/list\.php\?id=([A-Za-z0-9_]+)/i },
+  { name: 'nextonton', domain: 'nextonton.inotai.net', re: /https?:\/\/nextonton\.inotai\.net\/e\/([A-Za-z0-9_-]+)/i },
+  { name: 'chousei',   domain: 'chouseisan.com',       re: /https?:\/\/chouseisan\.com\/s\?h=([0-9a-f]+)/i },
+  { name: 'yotei',     domain: 'yotei-kun.jp',         re: /https?:\/\/yotei-kun\.jp\/(?:s\/|#event\/)([A-Za-z0-9]+)/i },
 ];
+
+// Gmail query for candidate mails: inbox only (moving a processed mail out of the inbox is what
+// stops it being picked up again), any supported tool's domain, received within newerThanDays.
+export function searchQuery(cfg) {
+  const days = cfg.gmail?.newerThanDays ?? 14;
+  return `in:inbox (${TOOLS.map((t) => t.domain).join(' OR ')}) newer_than:${days}d`;
+}
 
 // The mail must ask us to *enter* our availability, not merely announce a result.
 const REQUEST_KEYWORDS = [
@@ -77,7 +86,7 @@ export function classify(mail, cfg) {
     const inQuote = TOOLS.some((t) => t.re.test(mail.body || ''));
     return { matched: false, reason: inQuote
       ? '日程調整ツールのURLは引用（過去スレッド）内のみ＝メインは日程調整依頼でない'
-      : 'no tonton/Nextonton/調整さん/よていくん answer URL' };
+      : `no answer URL of ${TOOLS.map((t) => t.name).join('/')}` };
   }
 
   // 2) exclusions (checked before "matched" so we can log the skip reason)

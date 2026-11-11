@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { makeClient, makeGmail, makeCalendar, parseMessage } from './lib/google.mjs';
-import { classify } from './lib/classify.mjs';
+import { classify, searchQuery } from './lib/classify.mjs';
 import { judge, boundingWindow, mergeAbsenceEvents, holidayDates } from './lib/availability.mjs';
 import { withBrowser, getAdapter, openForReview } from './lib/browser.mjs';
 import { printSummary, candidateLabel, makeFileLogger } from './lib/logger.mjs';
@@ -78,7 +78,14 @@ async function main() {
   const skips = [];
 
   // --- 1) search inbox ---
-  const allMsgs = await gmail.searchMessages(cfg.gmail.searchQuery, 25);
+  // The query is built from the tool list in classify.mjs. A searchQuery left in an old config is
+  // ignored: it was a per-machine copy of that list and silently missed every tool added later.
+  if (cfg.gmail.searchQuery) {
+    console.error(`⚠ config の gmail.searchQuery は使わなくなったので無視します（対応ツールから組み立てる）。${args.config} から消してください。期間を変えるなら gmail.newerThanDays。`);
+  }
+  const query = searchQuery(cfg);
+  if (args.verbose) console.error(`query: ${query}`);
+  const allMsgs = await gmail.searchMessages(query, 25);
   const msgs = args.only ? allMsgs.filter((m) => m.id === args.only) : allMsgs;
   if (args.verbose) {
     console.error(`inbox hits: ${allMsgs.length}`);

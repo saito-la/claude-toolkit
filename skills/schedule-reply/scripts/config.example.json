@@ -4,7 +4,7 @@
   "gmail": {
     "credentialsPath": "/Users/<ユーザー名>/.config/gdrive-mcp/.gmail-credentials-private.json",
     "oauthClientPath": "/Users/<ユーザー名>/.config/gdrive-mcp/credentials.json",
-    "searchQuery": "in:inbox (tonton.amaneku.com OR nextonton.inotai.net OR chouseisan.com OR yotei-kun.jp) newer_than:14d",
+    "newerThanDays": 14,
     "schedulingLabel": "Scheduling"
   },
 
