@@ -93,7 +93,9 @@ EOF
 if ! cmp -s "$PLIST.new" "$PLIST"; then
   mv "$PLIST.new" "$PLIST"
   launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  # bootout は非同期で、外れ終わる前の bootstrap は `Bootstrap failed: 5: Input/output error` で落ち、登録が外れたまま止まる。外れ終わるのを待ってから登録する
+  for _ in $(seq 1 30); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 1; done
+  launchctl bootstrap "gui/$(id -u)" "$PLIST" || { sleep 2; launchctl bootstrap "gui/$(id -u)" "$PLIST"; }
 else
   rm -f "$PLIST.new"
 fi
