@@ -5,7 +5,7 @@
  *   node <エンジン>/scripts/check-today.mjs [today.md] [--fix]   # インスタンスのフォルダで実行する
  *
  * 手順の正本は ../docs/design.md「1件ずつの完了確認」。ここはその機械で拾える部分だけを受け持つ。
- *   1. 「やること」の各項目に出所（台帳のパスと行、Gmail のリンク、作業用の文書、時刻、top-priority.md）があるか。
+ *   1. 「やること」の各項目に出所（台帳のパスと行、Gmail・Outlook のメールのリンク、作業用の文書、時刻、top-priority.md）があるか。
  *      出所の無い項目は、済んだかどうかを誰も確かめられない
  *   2. 「`<台帳>` N行」の参照先が、今も未処理の行（`- [ ]`・`- [!]`）か。閉じた・消えた・ずれた行を拾う
  *   3. Gmail のリンクを付けた項目について、リンク先より後に同じスレッドで使い手が送った通（👍 などのリアクションと
@@ -52,7 +52,9 @@ const flag = (it, msg) => problems.push(`  ${it.line}行（${it.section}）: ${m
 
 // 1. 出所
 const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const SOURCE = new RegExp(`pj:\\/\\/open|‹[^›]+›|action-items\\.md|\`[^\`]+\\.md\`|#all\\/[0-9a-f]+|${esc(INST.cfg.workDoc.name)}|top-priority\\.md|\\d{1,2}:\\d{2}`);
+// ファイルのメール（設定の mailFiles。Outlook の画面から書き出したもの）の各通の link も出所に数える。
+// 2026-11-12、005 の init で、design.md「Gmail inbox の節」どおり Outlook の通に link だけを添えた項目が「出所が無い」で止まった
+const SOURCE = new RegExp(`pj:\\/\\/open|‹[^›]+›|action-items\\.md|\`[^\`]+\\.md\`|#all\\/[0-9a-f]+|outlook\\.office(?:365)?\\.com\\/mail\\/|${esc(INST.cfg.workDoc.name)}|top-priority\\.md|\\d{1,2}:\\d{2}`);
 for (const it of items.filter((x) => x.section === 'やること')) {
   if (!SOURCE.test(it.text)) flag(it, `出所が無い。台帳のパスと行、メールのリンク、${INST.cfg.workDoc.name} のいずれかを添える`);
 }
