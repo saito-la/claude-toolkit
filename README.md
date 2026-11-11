@@ -43,7 +43,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 ## 収録スキル
 
-**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）10件：
+**グローバル配置**（`~/.claude/skills/` へ配置し全プロジェクトで発見させる）11件：
 
 | スキル | 内容 |
 |---|---|
@@ -57,6 +57,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [claude-usage](skills/claude-usage/SKILL.md) | セッション記録から端末ごとの使用時間・VS Code と CLI の割合・並行数・依頼の数・トークンを CSV に書き出し、複数端末分をまとめて集計 |
 | [assistant](skills/assistant/SKILL.md) | 秘書の仕組みのエンジン。台帳（`action-items.md`）・予定表・Gmail・作業用の Google ドキュメントから、その日にやることを優先順に並べた today.md を作る。使い手ごとの設定と出力はインスタンスのフォルダ（`assistant.json`）に置き、そこで「init」「update」と言うと動く（要・Google の OAuth クライアント） |
 | [pj](skills/pj/SKILL.md) | 作業内容の文から ~/Projects の行き先を選び、Orca の作業場か新しい窓（Mac は iTerm2、Windows は Windows Terminal）で claude を起動する。worktree の統合（wt-finish.sh）も持つ |
+| [survey-answer](skills/survey-answer/SKILL.md) | 官公庁・学会などの実態調査・アンケートに、組織の資料から回答案を作り、資料で埋まらない設問は照会メールの下書きにし、確認を取ってから入力・送信して控えを残す。組織ごとの情報源の対応はプロジェクト側の文書に持つ |
 
 **用途が特定の業務に閉じるもの**（これも `install.py` が `~/.claude/skills/` へ置く）4件：
 
