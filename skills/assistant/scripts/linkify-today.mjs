@@ -57,7 +57,7 @@ lines.forEach((text, li) => {
     // 1つのリンクが持てる台帳は1つ。同じプロジェクトで台帳が2つあるときは最初のものを URL に、残りは依頼文だけに入れる
     const [[file, ns], ...rest] = [...files];
     const quote = (f, list) => {
-      const rows = readFileSync(`${PROJECTS}/${project}/${f}`, 'utf8').split('\n');
+      const rows = readFileSync(`${PROJECTS}/${project}/${f}`, 'utf8').split(/\r?\n/);
       return list.slice(0, 3).map((n) => `「${(rows[n - 1] || '').replace(/^\s*- \[[ !x]\]\s*/, '').replace(/\*\*/g, '').slice(0, 50)}…」`).join('');
     };
     const ledger = [[file, ns], ...rest].map(([f, list]) => `${f} の ${quote(f, list)}${list.length > 3 ? ` ほか${list.length - 3}行` : ''}`).join('、');

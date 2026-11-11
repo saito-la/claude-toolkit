@@ -6,9 +6,10 @@
  * 返事待ちの行の書式の正本は claude-toolkit の conventions/action-items-convention.md「返事待ちの行」で、
  * 機械で読む側の正本はこのファイル。読む側を2か所に持たないため、外の道具はここを import する。
  */
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { homedir } from 'os';
-import { join, relative, sep } from 'path';
+import { basename, dirname, join, relative, sep } from 'path';
 
 // 台帳のパスは today.md の参照と pj リンクに使うので、Windows でも / で区切る
 const relPath = (from, to) => relative(from, to).split(sep).join('/');
@@ -37,6 +38,36 @@ export function walkLedgers(dir = PROJECTS, depth = 1, out = []) {
   return out;
 }
 
+// 台帳を行に分ける。Windows の clone は core.autocrlf で改行が CRLF になり、'\n' で分けると行末に '\r' が残って、
+// 行末を $ で受ける正規表現（`- [ ] (.+)$`）が1行も当たらない。2026-11-12、311C4W991 で台帳35本・約700行が未処理0件として読まれた
+export const readLines = (p) => readFileSync(p, 'utf8').split(/\r?\n/);
+
+// 台帳を最後に変えた時刻。ファイルの mtime は clone・checkout・pull のたびに新しくなり、止まっている台帳も新しく見える。
+// git 管理下で手元に変更が無ければ最後の commit の時刻、変更があるか git 管理外なら mtime を使う
+const gitOut = (args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+const dirtyByTop = new Map();
+function dirtyFiles(dir) {
+  let top;
+  try { top = gitOut(['-C', dir, 'rev-parse', '--show-toplevel']).trim(); } catch { return null; }
+  if (!dirtyByTop.has(top)) {
+    const set = new Set();
+    try {
+      for (const e of gitOut(['-C', top, 'status', '--porcelain', '-z']).split('\0')) if (e.length > 3) set.add(join(top, e.slice(3)).toLowerCase());
+    } catch { /* 読めなければ commit 済みとみなす */ }
+    dirtyByTop.set(top, set);
+  }
+  return dirtyByTop.get(top);
+}
+export function lastChanged(p) {
+  const mtime = statSync(p).mtime;
+  const dirty = dirtyFiles(dirname(p));
+  if (!dirty || dirty.has(join(p).toLowerCase())) return mtime;
+  try {
+    const ct = gitOut(['-C', dirname(p), 'log', '-1', '--format=%ct', '--', basename(p)]).trim();
+    return ct ? new Date(Number(ct) * 1000) : mtime;
+  } catch { return mtime; }
+}
+
 // 返事待ちの行。「待ち：<アドレス>[、<アドレス>…] <最終の連絡日> <N>回目」に続けて、返事が来たときの次の一手を
 // 「次：」の後に並べて書ける。「下書き <Gmail のメッセージID>」はそのメールへの返信の下書き（ID を省くと新しいメール）で、
 // 1行に複数並べてよい。「実行 <台帳のフォルダからの相対パス>」は下書きの前に走らせるスクリプト（届いたメールの本文を
@@ -62,7 +93,7 @@ function parseNext(raw) {
 export function collectWaiting(root = PROJECTS, paths = walkLedgers(root)) {
   const out = [];
   for (const p of [...paths].sort()) {
-    readFileSync(p, 'utf8').split('\n').forEach((raw, i) => {
+    readLines(p).forEach((raw, i) => {
       if (!/^\s*- \[[ !]\]\s+/.test(raw)) return;
       const m = raw.match(WAIT_RE);
       if (!m) return;

@@ -9,7 +9,7 @@
  *   1. 作業用の文書の捕捉ゾーン    … 見出し1「# Capture」直下〜次の見出し1
  *   2. 作業用の文書の直近ToDoゾーン … 「# 2w Schedule」の当日の日付見出し直下〜見出し1「# Sink」
  *   3. Apple Notes の捕捉用のノート（features.appleNotes）
- *   4. 台帳（action-items.md と <topic>_action_items.md）の未処理行。mtime が --ledger-days 日を過ぎた台帳は、
+ *   4. 台帳（action-items.md と <topic>_action_items.md）の未処理行。最後に変えてから（git の最後の commit。手元に変更があれば mtime）--ledger-days 日を過ぎた台帳は、
  *      期日（目安は除く）・「待ち：」・[!] の行を持つときだけ読む（止まっている台帳ほど見落とすため。stale・staleDays を付ける）
  *   5. 予定表（calendars）の当日分と先の分（空き時間・場所・直前直後の面会相手・予定の重なり）。複数あれば1つの並びにまとめる
  *   6. インスタンスの top-priority.md（使い手が指定した最優先課題。`## ` 節ごとに構造化する）
@@ -38,7 +38,7 @@ import { execFileSync } from 'child_process';
 import { dirname, join, relative, sep } from 'path';
 import { classifyEventTitle } from './event-kind.mjs';
 import { conflictChecker, loadRules } from './conflicts.mjs';
-import { walkLedgers, collectWaiting } from './ledgers.mjs';
+import { walkLedgers, collectWaiting, readLines, lastChanged } from './ledgers.mjs';
 import { instance, need, PROJECTS } from './lib/instance.mjs';
 import { accessToken, getDoc, paragraphs } from './lib/google.mjs';
 import { fileEvents, isFileCalendar } from './lib/calendars.mjs';
@@ -489,8 +489,9 @@ function collectLedgers(today) {
   // 読まなかった（止まっている）台帳も、未処理の件数と止まっている日数だけは出す。棚卸しの候補になる
   const staleList = [];
   for (const p of paths.sort()) {
-    const st = statSync(p);
-    const lines = readFileSync(p, 'utf8').split('\n');
+    // mtime と名乗るが、中身は台帳を最後に変えた時刻（ledgers.mjs の lastChanged。clone・pull で新しくならない）
+    const st = { mtimeMs: lastChanged(p).getTime() };
+    const lines = readLines(p);
     // 鮮度を過ぎた台帳も、期日・待ち・[!] の未処理行があれば読む（目安だけの行では読まない）。止まっている台帳ほど見落とすと危ない
     const stale = st.mtimeMs < cutoff;
     if (stale && !lines.some((l) => /^\s*- \[!\]\s+/.test(l) || (/^\s*- \[ \]\s+/.test(l) && (/待ち：/.test(l) || (EXTERNAL_DEADLINE_RE.test(l.replace(NOT_DEADLINE_RE, '')) && dateTokensOf(l).length))))) {
@@ -579,7 +580,7 @@ function collectKeepInMind(today) {
         const [path, section = null] = ref.split('#');
         const abs = join(PROJECTS, path);
         if (!existsSync(abs)) return { path, section, missing: true };
-        const lines = readFileSync(abs, 'utf8').split('\n');
+        const lines = readLines(abs);
         const open = [];
         let sec = null;
         lines.forEach((raw, i) => {
@@ -594,7 +595,7 @@ function collectKeepInMind(today) {
           open.push({ line: i + 1, blocked: m[1] === '!', text, ...(deadline ? { deadline } : {}) });
         });
         const ext = open.filter((o) => o.deadline?.kind === 'external').sort((a, b) => a.deadline.ymd.localeCompare(b.deadline.ymd));
-        const mtime = new Date(statSync(abs).mtimeMs).toISOString().slice(0, 10);
+        const mtime = lastChanged(abs).toISOString().slice(0, 10);
         const idle = daysBetween(mtime, today);
         return {
           path, section, openCount: open.length,
@@ -661,7 +662,7 @@ async function fetchBallReturned(paths) {
   if (NO_GMAIL) return { checked: false, items: [] };
   const rowsById = new Map();
   for (const p of paths) {
-    readFileSync(p, 'utf8').split('\n').forEach((raw, i) => {
+    readLines(p).forEach((raw, i) => {
       if (!/^\s*- \[[ !]\]\s+/.test(raw)) return;
       for (const id of new Set([...raw.matchAll(GMAIL_ID_RE)].map((m) => m[1]))) {
         if (!rowsById.has(id)) rowsById.set(id, []);

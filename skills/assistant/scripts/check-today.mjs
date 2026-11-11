@@ -97,7 +97,7 @@ for (const it of items) {
   for (const { path, n, kind } of refsOf(it.text)) {
     const file = resolve(path);
     if (!file) { flag(it, `\`${path}\` が見つからない`); continue; }
-    const rows = readFileSync(file, 'utf8').split('\n');
+    const rows = readFileSync(file, 'utf8').split(/\r?\n/);
     const row = rows[n - 1];
     const key = `${path}:${n}`;
     const pinned = snap.rows[key];

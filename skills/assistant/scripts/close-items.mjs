@@ -80,7 +80,8 @@ for (const it of items) {
   // 台帳そのものに未コミットの変更があれば、別のセッションが書いている途中かもしれないので触らない
   if (it.tracked && tryGit(it.repo, 'diff', '--name-only', '--', it.abs)) { it.skip = '台帳に未コミットの変更がある（別のセッションが編集中の可能性）'; continue; }
   // 同じファイルの2件目以降は、1件目で書き換えた行の上に重ねる（読み直すと先の書き換えが消える）
-  if (!byFile.has(it.abs)) byFile.set(it.abs, { lines: readFileSync(it.abs, 'utf8').split('\n'), items: [] });
+  // 改行は元のまま書き戻す（Windows の clone は core.autocrlf で CRLF）
+  if (!byFile.has(it.abs)) { const t = readFileSync(it.abs, 'utf8'); byFile.set(it.abs, { eol: t.includes('\r\n') ? '\r\n' : '\n', lines: t.split(/\r?\n/), items: [] }); }
   const { lines } = byFile.get(it.abs);
   const cur = lines[it.line - 1] ?? '';
   if (!/^\s*- \[[ !]\]/.test(cur)) { it.skip = `${it.line}行が未完了の行でない`; continue; }
@@ -95,7 +96,7 @@ if (!APPLY) { console.log('dry-run。--apply で実行します。'); process.ex
 const touched = new Map();
 for (const [abs, f] of byFile) {
   if (!f.items.length) continue;
-  writeFileSync(abs, f.lines.join('\n'));
+  writeFileSync(abs, f.lines.join(f.eol));
   execFileSync(PYTHON, [ARCHIVE, abs], { stdio: 'inherit' });
   const it = f.items[0];
   if (!it.tracked) { console.log(`・${it.path} は git 管理外。退避までで止める`); continue; }

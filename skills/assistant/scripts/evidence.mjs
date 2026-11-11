@@ -117,7 +117,7 @@ for (const it of items) {
   for (const { path, n } of refs) {
     const file = `${PROJECTS}/${path}`;
     if (!existsSync(file)) { marks.add('閉じた'); notes.push(`${path} が無い`); continue; }
-    const rows = readFileSync(file, 'utf8').split('\n');
+    const rows = readFileSync(file, 'utf8').split(/\r?\n/);
     let row = rows[n - 1] || '';
     const pinned = snap[`${path}:${n}`];
     if (pinned !== undefined && row !== pinned) {
