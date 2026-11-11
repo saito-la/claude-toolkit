@@ -32,7 +32,7 @@
 #     --dry-run   ウィンドウを開かず学習もせず、cd 先として決まったパスだけを出して終わる。
 #                 worktree への振り替えは実際に行われる（作られた worktree は自分で片付ける）
 #
-# 終了コード: 0=起動成功 / 1=引数不正 / 2=プロジェクト不在
+# 終了コード: 0=起動成功 / 1=引数不正 / 2=プロジェクト不在 / 3=pj-orca.sh が理由を出して止めた
 set -euo pipefail
 
 # Mac と Windows（Git Bash）の差は pj-platform.sh が吸収する。Windows では iTerm2 の代わりに
@@ -85,15 +85,20 @@ fi
 
 # Orca が動いていれば、iTerm2 の窓ではなく Orca の作業場で開く（pj-orca.sh の冒頭）。
 # 継続（-c）は Orca に同じ場所で再開する手段が無いので、従来どおり iTerm2 で開く。
-# Orca で開けなかったときも iTerm2 へ戻る（起動を止めない）。
+# Orca で開けなかったときも iTerm2 へ戻る（起動を止めない）。ただし pj-orca.sh が理由を出して
+# 止めた（終了コード 3。下位フォルダが作業場に入らない等）ときは、iTerm2 へ戻らずに止める。
 if (( ! continue_session && ! dry_run )); then
   pj_orca="$(dirname "${BASH_SOURCE[0]}")/pj-orca.sh"
-  if bash "$pj_orca" --check \
-     && bash "$pj_orca" "$relpath" ${prompt_file:+--prompt-file "$prompt_file"}; then
-    if [[ -n "$learn_query" ]]; then
-      python3 "$(dirname "${BASH_SOURCE[0]}")/pj-learn.py" record "$learn_query" "$relpath" >/dev/null 2>&1 || true
+  if bash "$pj_orca" --check; then
+    orca_rc=0
+    bash "$pj_orca" "$relpath" ${prompt_file:+--prompt-file "$prompt_file"} || orca_rc=$?
+    if (( orca_rc == 0 )); then
+      if [[ -n "$learn_query" ]]; then
+        python3 "$(dirname "${BASH_SOURCE[0]}")/pj-learn.py" record "$learn_query" "$relpath" >/dev/null 2>&1 || true
+      fi
+      exit 0
     fi
-    exit 0
+    (( orca_rc != 3 )) || exit 3
   fi
 fi
 

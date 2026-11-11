@@ -39,7 +39,11 @@
 # 使わない設定: PJ_LAUNCHER=iterm を環境変数に置くと --check が常に 1 を返し、従来どおり
 # iTerm2（Windows では Windows Terminal）で開く。
 #
+# 作業場の基点は、ローカルの既定ブランチと origin のどちらが他方を含むかで選ぶ（下の「作業場の
+# 基点」）。下位フォルダが作業場に入らないときは、作業場を作らずに（作った後なら消して）理由を出す。
+#
 # 終了コード: 0=起動した / 1=Orca で開けない（呼び出し側は iTerm2 へ戻る）/ 2=引数不正
+#             3=開かずに止めた（理由は標準エラー。呼び出し側も iTerm2 へ戻らずに止める）
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -226,10 +230,93 @@ root="$(git -C "$d" rev-parse --show-toplevel 2>/dev/null)" || { echo "pj-orca.s
 sub="$(git -C "$d" rev-parse --show-prefix 2>/dev/null)"; sub="${sub%/}"
 name="$(basename "$relpath")-$(date +%m%d-%H%M%S)"
 
+# 開けない理由を出して止める。終了コード 3 で呼び出し側（pj-open.sh）にも止めさせる。iTerm2 へ
+# 戻ると、Orca の一覧に載らない窓が別の基点で開き、止まったことにも基点の違いにも気づきにくい。
+# 依頼文は消さずに残す
+stop() {
+  echo "pj-orca.sh: $1" >&2
+  [[ -n "$prompt_file" ]] && echo "pj-orca.sh: 依頼文は残した: $prompt_file" >&2
+  exit 3
+}
+
+# ---- 作業場の基点 ----
+# Orca の既定の基点は origin の既定ブランチ（作る前に Orca が fetch する）。ローカルの既定
+# ブランチにしか無いコミットは作業場に入らず、それが作った下位フォルダへ cd できずに起動が
+# 失敗していた。ローカルと origin のどちらが他方を含むかで、何も失わない側を選ぶ。分岐して
+# いれば origin を基点にし、下位フォルダの中だけに触れるローカルのコミットを載せる。判定は
+# ローカルの参照だけで行い、fetch はしない（pj-worktree.sh と同じく速度のため）。何を失うかの
+# 整理は README「Orca で開く」
+base_args=() picks=() base_ref="" base_note="" def="" gap="" blocked=""
+plan_base() {
+  local l r c f
+  def="$(git -C "$root" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)"
+  def="${def#origin/}"; [[ -n "$def" ]] || def=main
+  l="$(git -C "$root" rev-parse -q --verify "refs/heads/$def^{commit}")" || return 0
+  r="$(git -C "$root" rev-parse -q --verify "refs/remotes/origin/$def^{commit}")" || return 0
+  base_ref="origin/$def"
+  [[ "$l" != "$r" ]] || return 0
+  read -r c f < <(git -C "$root" rev-list --left-right --count "$r...$l")
+  if (( f && c )); then gap="ローカルの $def は origin より $f 件進み、$c 件遅れている"
+  elif (( f )); then gap="ローカルの $def は origin より $f 件進んでいる"
+  else gap="ローカルの $def は origin より $c 件遅れている"
+  fi
+  if git -C "$root" merge-base --is-ancestor "$r" "$l"; then
+    base_args=(--base-branch "$def"); base_ref="$def"
+    base_note="（origin に無いコミットが $f 件あるので、ローカルの $def を基点にした）"
+    return 0
+  fi
+  git -C "$root" merge-base --is-ancestor "$l" "$r" && return 0
+  base_note="（${gap}。origin を基点にした）"
+  [[ -n "$sub" ]] || return 0
+  # 載せるのは origin に同じ変更が無いもの（--cherry-pick）。下位フォルダの外にも触れるものが
+  # 1件でもあれば載せない。一部だけを載せると壊れ、外の変更を載せるとこの作業場から push される
+  picks=($(git -C "$root" rev-list --reverse --no-merges --cherry-pick --right-only "$r...$l" -- "$sub"))
+  for c in ${picks[@]+"${picks[@]}"}; do
+    while read -r f; do
+      [[ "$f" == "$sub/"* ]] || { picks=(); blocked=1; return 0; }
+    done < <(git -C "$root" diff-tree --no-commit-id --name-only -r "$c")
+  done
+}
+plan_base
+
+if [[ -n "$sub" && -n "$base_ref" ]] && (( ${#picks[@]} == 0 )) \
+   && ! git -C "$root" cat-file -e "$base_ref:$sub" 2>/dev/null; then
+  if git -C "$root" cat-file -e "$def:$sub" 2>/dev/null; then
+    [[ -n "$blocked" ]] \
+      || stop "$sub は origin/$def で移動か削除をされている（${gap}）。$root の同期を直してから開く"
+    stop "$sub は $base_ref に無く、ローカルの $def にしか無い（${gap}）。$def のコミットが $sub の外にも触れているので、作業場へ載せられない。$root の同期を直してから開く"
+  fi
+  stop "$sub は $def にも origin/$def にも無い（未コミットか、別のブランチにだけある）。コミットしてから開く"
+fi
+
+# 作業場を作り、載せるコミットを載せ、下位フォルダがあることを確かめる。無ければ作業場を消して止める
+open_workspace() {
+  wt="$(new_workspace "$root" "$name" ${base_args[@]+"${base_args[@]}"})" && [[ -n "$wt" ]] \
+    || { echo "pj-orca.sh: 作業場の作成に失敗した" >&2; exit 1; }
+  if (( ${#picks[@]} )); then
+    # 作りたての作業場は Orca も git を読みに来るので、衝突ではない失敗（index.lock 等）は1回やり直す
+    local try conflict=""
+    base_note="（${gap}。$sub に触れるローカルのコミット ${#picks[@]} 件は、作業場に載せられなかった）"
+    for try in 1 2; do
+      if git -C "$wt" cherry-pick -x "${picks[@]}" >/dev/null 2>&1; then
+        base_note="（${gap}。$sub に触れるローカルのコミット ${#picks[@]} 件を作業場に載せた）"
+        break
+      fi
+      git -C "$wt" rev-parse -q --verify CHERRY_PICK_HEAD >/dev/null 2>&1 && conflict=1
+      git -C "$wt" cherry-pick --abort >/dev/null 2>&1
+      [[ -z "$conflict" ]] || { base_note="（${gap}。$sub に触れるローカルのコミット ${#picks[@]} 件は、衝突したので作業場に載せていない）"; break; }
+      sleep 1
+    done
+  fi
+  [[ -z "$sub" || -d "$(pj_posix "$wt")/$sub" ]] && return 0
+  "$ORCA" worktree rm --worktree "path:$wt" --delete-branch --json >/dev/null 2>&1
+  stop "作業場に $sub が無い（基点 ${base_ref:-既定}${base_note}）。作った作業場は消した。$root の同期を確かめてから開く"
+}
+
 if [[ -n "$resume" ]]; then
-  wt="$(new_workspace "$root" "$name")" && [[ -n "$wt" ]] || { echo "pj-orca.sh: 作業場の作成に失敗した" >&2; exit 1; }
+  open_workspace
   run_in "$wt" "$(launch_line "${sub:+$(pj_posix "$wt")/$sub}" claude --resume "$resume")" || exit 1
-  done_msg "→ セッション $resume を Orca の新しい作業場 $name で再開しました"
+  done_msg "→ セッション $resume を Orca の新しい作業場 $name で再開しました$base_note"
 fi
 
 if [[ -n "$request" ]]; then
@@ -239,9 +326,9 @@ fi
 if [[ -z "$sub" ]] && (( ! PJ_WIN )); then
   args=(--agent "$agent" --surface terminal)
   [[ -n "$prompt_file" ]] && args+=(--prompt "$(cat "$prompt_file")")
-  new_workspace "$root" "$name" "${args[@]}" >/dev/null || { echo "pj-orca.sh: 作業場の作成に失敗した" >&2; exit 1; }
+  new_workspace "$root" "$name" ${base_args[@]+"${base_args[@]}"} "${args[@]}" >/dev/null || { echo "pj-orca.sh: 作業場の作成に失敗した" >&2; exit 1; }
 else
-  wt="$(new_workspace "$root" "$name")" && [[ -n "$wt" ]] || { echo "pj-orca.sh: 作業場の作成に失敗した" >&2; exit 1; }
+  open_workspace
   run_in "$wt" "$(launch_line "$(pj_posix "$wt")${sub:+/$sub}" "$agent")" || exit 1
 fi
-done_msg "→ $relpath を Orca の作業場 $name で起動しました"
+done_msg "→ $relpath を Orca の作業場 $name で起動しました$base_note"

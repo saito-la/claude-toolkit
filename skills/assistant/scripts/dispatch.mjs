@@ -99,4 +99,10 @@ if (DRY) { console.log('dry-run。開かずに終える'); process.exit(0); }
 const dir = mkdtempSync(join(tmpdir(), 'assistant-dispatch-'));
 const file = join(dir, 'prompt.txt');
 writeFileSync(file, prompt + '\n');
-execFileSync('bash', [PJ_OPEN, PROJECT, '--prompt-file', file], { stdio: 'inherit' });
+try {
+  execFileSync('bash', [PJ_OPEN, PROJECT, '--prompt-file', file], { stdio: 'inherit' });
+} catch (e) {
+  // 開く側が理由を標準エラーに出している。開けていないことをはっきり返し、依頼文の置き場を残す
+  console.error(`開けなかった（理由は上）。依頼文：${file}`);
+  process.exit(e.status || 1);
+}
