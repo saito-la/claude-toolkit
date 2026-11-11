@@ -1,7 +1,7 @@
 # assistant
 
 作成日：2026-10-24
-改訂日：2026-11-10
+改訂日：2026-11-12
 
 ## 1. 概要
 
@@ -51,7 +51,7 @@
 
 ### 2.3. スクリプトの呼び方
 
-インスタンスのフォルダを作業ディレクトリにして `node ~/.claude/skills/assistant/scripts/<名前>.mjs` で呼ぶ。スクリプトは作業ディレクトリから上へたどって `assistant.json` を探す。別の場所から呼ぶときは環境変数 `ASSISTANT_INSTANCE` にインスタンスのフォルダを入れる。
+インスタンスのフォルダを作業ディレクトリにして `node ~/.claude/skills/assistant/scripts/<名前>.mjs` で呼ぶ。スクリプトは作業ディレクトリから上へたどって `assistant.json` を探す。見つかったフォルダが git の作業場（worktree。Orca や pj が開く作業場）の中なら、本体の同じ位置のフォルダを使うので、today.md・`data/` はどの作業場から回しても本体に書かれる（`scripts/lib/instance.mjs`）。別の場所から呼ぶときは環境変数 `ASSISTANT_INSTANCE` にインスタンスのフォルダを入れる。
 
 - `collect.mjs`：候補を集めて `data/candidates.json` に書く
 - `session-start.mjs`：開始時のフックの本体（Apple Notes の取り込みと `collect.mjs`）

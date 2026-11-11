@@ -6,16 +6,22 @@
  *
  * インスタンスのフォルダは次の順で決める。
  *   1. 環境変数 ASSISTANT_INSTANCE
- *   2. 作業ディレクトリから上へたどって最初に assistant.json があるフォルダ
+ *   2. 作業ディレクトリから上へたどって最初に assistant.json があるフォルダ。それが git の作業場（worktree）の中なら、
+ *      本体の同じ位置のフォルダ（本体にも assistant.json があるとき）
  * どちらでも見つからなければ、名前を出して止まる。
+ *
+ * 作業場を本体へ読み替えるのは、Orca や pj が開く作業場で回すと today.md・data/（git に入れない）が作業場に書かれ、
+ * 作業場を片付けると消え、次の作業場では前回の today.md が無く毎回すべてを確かめ直していたため（2026-11-06 に 005 で発覚、
+ * 2026-11-12 に直した）。設定（assistant.json・overview.md）も本体のものを読む。
  *
  * 設定の項目と既定値の正本は README.md「設定」。項目を足すときは、今の設定のままで動く既定値を
  * DEFAULTS に足す（使い手が設定を直さなくても改良が届くように）。既定値を置けない項目は need() で
  * 起動時に名前を出して止める。
  */
 import { readFileSync, existsSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { homedir } from 'os';
-import { basename, dirname, join, resolve } from 'path';
+import { basename, dirname, join, relative, resolve } from 'path';
 
 // PowerShell では HOME が未定義のことがあるので os.homedir() を使う
 export const HOME = homedir();
@@ -51,9 +57,23 @@ export const expandHome = (p) => (typeof p === 'string' && (p === '~' || p.start
 function findDir() {
   if (process.env.ASSISTANT_INSTANCE) return resolve(expandHome(process.env.ASSISTANT_INSTANCE));
   for (let d = process.cwd(); ; d = dirname(d)) {
-    if (existsSync(join(d, CONFIG_NAME))) return d;
+    if (existsSync(join(d, CONFIG_NAME))) return mainCheckoutOf(d);
     if (dirname(d) === d) return null;
   }
+}
+
+// d が git の作業場（worktree）の中なら、本体の同じ位置のフォルダを返す。本体に assistant.json が無い・git が無いときは d のまま
+function mainCheckoutOf(d) {
+  let out;
+  try {
+    out = execFileSync('git', ['-C', d, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(/\r?\n/);
+  } catch { return d; }
+  const [gitDir, commonDir, top] = out.map((p) => resolve(p));
+  if (!top || gitDir === commonDir) return d; // 本体そのもの
+  // 本体は共有の管理フォルダ（<本体>/.git）の1つ上。インスタンスがリポジトリの下位にあっても同じ位置を指す
+  const main = join(dirname(commonDir), relative(top, d));
+  return existsSync(join(main, CONFIG_NAME)) ? main : d;
 }
 
 // 1段目の項目がオブジェクトなら既定値と重ね、それ以外は設定の値で置き換える
