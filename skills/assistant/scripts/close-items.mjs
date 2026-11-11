@@ -9,8 +9,9 @@
  * 例：work/admin/action-items.md	59	山田さん	10/15 08:30 に送信済み
  *
  * 規則の正本は ../docs/design.md「書き込み方針」の「台帳の行を閉じる」。ここは手順だけを持つ。
- *   1. リポジトリごとに fetch し、遅れていれば追随する。手元の未コミットの変更と取り込む変更が
- *      同じファイルに触れるときは、そのリポジトリには手を付けない（2026-10-17 に autostash の衝突を起こした）
+ *   1. リポジトリごとに fetch し、遅れていれば fast-forward で追随する。手元の未コミットの変更と取り込む変更が
+ *      同じファイルに触れるとき（2026-10-17 に autostash の衝突を起こした）、手元に未 push の commit があるとき、
+ *      fast-forward できないときは、そのリポジトリには手を付けない
  *   2. 行が今も `- [ ]`・`- [!]` で、照合の文字列を含むかを確かめる。ずれていれば何もしない
  *   3. `- [x]` にして行末に根拠を足し、archive-action-items.py で退避する
  *   4. git 管理下の台帳だけ、その2ファイルを commit・push する。手元の他の変更は巻き込まない
@@ -58,7 +59,16 @@ for (const repo of repos) {
   const incoming = (tryGit(repo, 'diff', '--name-only', 'HEAD', '@{u}') || '').split('\n').filter(Boolean);
   const overlap = dirty.filter((f) => incoming.includes(f));
   if (overlap.length) { blocked.add(repo); console.log(`⚠ ${repo}：${behind} コミット遅れ。手元の変更と重なる（${overlap.join(', ')}）ので触らない`); continue; }
-  if (APPLY) { git(repo, 'pull', '-q', '--rebase', '--autostash'); console.log(`↓ ${repo}：${behind} コミット追随`); }
+  // 追随は fast-forward だけにする。pull --rebase --autostash は、手元の未 push の commit の積み直しか未コミットの
+  // 編集の戻しで衝突すると、rebase の途中や衝突と stash を残したまま終わり、無人の処理が書く共有の作業コピーの
+  // 以後の pull をすべて止める。手元に未 push の commit があれば、積み直しはその commit を作った処理に任せて触らない
+  const ahead = Number(tryGit(repo, 'rev-list', '--count', '@{u}..HEAD') || 0);
+  if (ahead) { blocked.add(repo); console.log(`⚠ ${repo}：${behind} コミット遅れ。手元に未 push の commit が ${ahead} 件あるので触らない`); continue; }
+  if (APPLY) {
+    try { git(repo, 'merge', '-q', '--ff-only', '@{u}'); console.log(`↓ ${repo}：${behind} コミット追随`); } catch (e) {
+      blocked.add(repo); console.log(`⚠ ${repo}：${behind} コミット遅れ。fast-forward できない（${String(e.stderr || e.message).trim().split('\n')[0]}）ので触らない`);
+    }
+  }
   else console.log(`↓ ${repo}：${behind} コミット遅れ（--apply で追随する）`);
 }
 
