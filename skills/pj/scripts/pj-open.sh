@@ -172,8 +172,10 @@ fi
 # AppleScript 文字列へ安全に埋め込むため二重引用符をエスケープ（~/Projects 配下は通常単純パス）
 esc_dir=${launch_dir//\"/\\\"}
 
+# iTerm2 は名前ではなく bundle id で呼ぶ。~/Applications/iTerm.app に置いた端末（311C4M005）では
+# 名前 "iTerm2" が引けず（-1728）、用語辞書が読めないまま構文エラー（-2741）で落ちた（2026-11-07）
 /usr/bin/osascript <<APPLESCRIPT
-tell application "iTerm2"
+tell application id "com.googlecode.iterm2"
   set w to (create window with default profile)
   tell current session of w
     -- 先頭の Ctrl-U は入力行に先に溜まった文字を消す（理由は mail-autopilot/resume-open.sh の冒頭）
@@ -188,7 +190,7 @@ APPLESCRIPT
 (
   for t in 1 2 3 5; do
     sleep "$t"
-    /usr/bin/osascript -e 'tell application "iTerm2" to activate' >/dev/null 2>&1 || true
+    /usr/bin/osascript -e 'tell application id "com.googlecode.iterm2" to activate' >/dev/null 2>&1 || true
   done
 ) &
 disown 2>/dev/null || true
