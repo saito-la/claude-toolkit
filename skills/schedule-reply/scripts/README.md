@@ -1,6 +1,6 @@
 # schedule-reply — 日程調整メール自動回答
 
-シングルユーザー向け・要個別セットアップ。Gmail の inbox を定期ポーリングし、**tonton / 調整さん / よていくん**
+シングルユーザー向け・要個別セットアップ。Gmail の inbox を定期ポーリングし、**tonton / Nextonton / 調整さん / よていくん**
 の日程調整入力依頼を検知して、Google カレンダーの空きを `config.availability` で設定した
 営業時間で判定し、回答欄を `config.displayName` の名義で自動入力する。処理済みメールは `Scheduling` ラベルへ
 移動して既読化する。
@@ -26,6 +26,7 @@ in:inbox 検索 ─▶ 分類/除外 ─▶ 回答ページを開く ─▶ 候�
 |---|---|---|---|
 | **調整さん** (chouseisan.com) | 埋め込みJSON `choices` から取得 | ◯/△/✕（枠単位） | **全自動**：名前入力→各候補を alt 属性で ◯/△/✕ クリック→フォーム送信 |
 | **tonton** (tonton.amaneku.com) | グリッド見出しの日付から取得 | 日単位◯/△/✕（ログ表示）＋30分枠単位 | **全自動**：`/add.php` へ回答フォームを直接POST（`mtgtime_flg_N` 文字列） |
+| **Nextonton** (nextonton.inotai.net) | 公開API `GET /api/events/<ID>` の `days[]` | 日単位◯/△/✕（ログ表示）＋30分枠単位（●/▲/×） | **全自動**：ブラウザを使わず API へ登録・上書き→読み直して一致を確認 |
 | **よていくん** (yotei-kun.jp) | ページが公開する `window.S`（期間・時間帯・刻み・回答）から算出 | 日単位◯/△/✕（ログ表示）＋枠単位（○か空欄の2値） | **全自動**：表の空き枠を選択→「回答を送信する」→別のブラウザで読み直して一致を確認 |
 
 tonton のタイムラインはセルがクリック不能（0サイズspan・JS不透明）のため、UI操作ではなく
@@ -42,6 +43,16 @@ tonton のタイムラインはセルがクリック不能（0サイズspan・JS
 開くため、`displayName` と同じ名前の回答が既にあればその uid を使い回して上書きする（tonton と同じく名前で同一人物とみなす。
 パスワードは要らない）。送信後は、保存がローカルに留まっても結果画面へ移るアプリなので、別のブラウザで開き直して
 サーバー側の回答が送った枠と一致することを確かめる。1on1（枠の予約）形式は未対応で、エラーにして手で回答させる。
+
+Nextonton は tonton の後継を名乗る別サービスで、URL は `https://nextonton.inotai.net/e/<ID>`。ページは公開 JSON API の
+薄い画面なので、ブラウザを開かず API を直接呼ぶ（`/js/event.js`・`/js/common.js` を読んで確かめた、2026-11-11）。
+`days[].slots` は48文字で、06:00 から翌05:30 までの30分枠（`1`＝候補）。回答 `marks` は日ごとの48文字で、`s`★希望・`o`●可・
+`m`▲未定・`x`×不可・`-`候補外。候補の各枠を `judge()` にかけ、空き＝`o`、一部重複＝`m`、予定あり・時間外＝`x` にする（★は使わない）。
+24:00 以降の枠は翌日の枠として判定する。登録は `POST /api/events/<ID>/participants` に `{name, comment, marks, pwSalt, pwKey}`
+（`pwKey`＝PBKDF2-SHA256、salt＝`'nittei-awase:' + pwSalt`、30万回、256bit を base64url）。同名の回答があれば
+`browser.tontonEditPassword` から作った `pwKey` で `.../verify` を通してから `PUT` で上書きする。パスワードが未設定（4文字未満）・
+合わない・同名が2件以上のときは、重複を作らずエラーで止める。無料枠切れ（Cloudflare 1027・`overLimit`、毎朝9時に戻る）と
+回数制限（429・1015）もエラーとして飛ばし、次回に再試行する。消えた・期限切れのイベント（404）はスキップする。
 
 ## コードと個人データの分離
 
@@ -68,7 +79,7 @@ cp "$SCRIPTS/config.example.json" ~/.config/schedule-reply/config.json
 chmod 700 ~/.config/schedule-reply && chmod 600 ~/.config/schedule-reply/config.json
 #   - displayName / 除外リスト / businessStart-End を自分の値に設定
 #   - gmail/calendar の credentialsPath を自分のGoogle OAuth認証情報のパスに合わせる
-#   - gmail.searchQuery は対応ツールのドメイン（tonton.amaneku.com・chouseisan.com・yotei-kun.jp）を OR で並べる
+#   - gmail.searchQuery は対応ツールのドメイン（tonton.amaneku.com・nextonton.inotai.net・chouseisan.com・yotei-kun.jp）を OR で並べる
 #   - flags.dryRun を false にすると送信あり（既定運用）。true なら判定のみ
 
 # 3) 実行（cwd 非依存。config は自動で ~/.config/schedule-reply/config.json が使われる）
@@ -100,8 +111,8 @@ node -e "import('playwright').then(m=>console.log('OK', !!m.chromium))"
 ## 本番投入の順序
 
 1. **`--dry-run` で判定表を確認**（誤検知・除外もれがないか）。
-2. **送信を有効化**：`config.json` の `flags.dryRun` を `false` に（調整さん・tonton・よていくんとも送信経路は検証済み）。
-   - tonton は後から編集できるよう `browser.tontonEditPassword` を設定推奨。
+2. **送信を有効化**：`config.json` の `flags.dryRun` を `false` に（調整さん・tonton・Nextonton・よていくんとも送信経路は検証済み）。
+   - tonton は後から編集できるよう `browser.tontonEditPassword` を設定推奨。Nextonton は登録に必須（4文字以上）。
 3. **ラベル移動・既読化を有効化**：Gmail に `gmail.modify` スコープを追加（下記）。
 4. **定期実行を登録**（launchd、任意）。
 
@@ -139,13 +150,13 @@ launchctl unload ~/Library/LaunchAgents/com.schedule-reply.plist
 - 参照カレンダーは `config.calendar.calendarIds` で指定したもののみ。
 - **除外**：`config.exclude.senders`（送信者）・`config.exclude.subjectPatterns`（件名パターン）に一致するメール。ログにスキップ理由を残す。
 - 検知は**メインメッセージ（引用・過去スレッドを除いた本文冒頭）**で判定。対象URLと入力依頼の両方がメイン部にある場合のみ動作。議事録・通知・返信引用にだけ URL があるメールは自動スキップ（メインが日程調整依頼でないため）。
-- tonton・よていくんは**ログインしない**（公開ページ扱い）。
+- tonton・Nextonton・よていくんは**ログインしない**（公開ページ扱い）。
 - 個人データ（`config.json`・`state.jsonl`・`logs/`）は `~/.config/schedule-reply/` に置きリポジトリに入れない（上記「コードと個人データの分離」）。同名ファイルをこのディレクトリに置いた場合に備えて `.gitignore` にも入れてある。
 
 ## 判定ロジック
 
 - **時刻つき候補**（調整さん「10:00〜11:00」等）：時間外/週末→✕、空き→◯、一部重複→△、全重複→✕。
-- **日単位候補**（tonton・よていくんの日付列）：会議長（既定60分）以上の空き枠が業務時間内に…
+- **日単位候補**（tonton・Nextonton・よていくんの日付列）：会議長（既定60分）以上の空き枠が業務時間内に…
   - 無い/週末 → ✕、有り かつ 業務時間の半分以上空き → ◯、有るが混雑 → △。
 - タイムゾーンは Asia/Tokyo 固定。
 - **祝日**は時刻の有無によらず ✕（根拠「祝日」）。祝日の予定は Google カレンダー上で空き扱い（transparent）のため freeBusy に出ない。`poll.mjs` が `config.calendar.holidayCalendarId`（既定：Google の日本の祝日カレンダー `ja.japanese#holiday@group.v.calendar.google.com`、空文字で無効）を読み、説明欄が「祭日」で始まる行事（節分・七夕・クリスマス等）は除いて祝日だけを使う。読めなければ警告を出して祝日の判定なしで続ける。
@@ -168,8 +179,9 @@ schedule-reply/
         ├── google.mjs              # OAuth更新＋Gmail/Calendar REST（fetchのみ・依存ゼロ）
         ├── classify.mjs            # ツール判別・入力依頼判定・除外
         ├── availability.mjs        # 平日8-17＋freeBusy＋祝日 → ◯/△/✕
-        ├── browser.mjs             # Playwright起動＋アダプタ振り分け＋確認用オープン
+        ├── browser.mjs             # Playwright起動＋アダプタ振り分け＋確認用オープン（needsBrowser=false のアダプタはブラウザを起動しない）
         ├── adapters/tonton.mjs     # tonton（/add.php 直接POST・mtgtime_flg・重複時は削除して上書き）
+        ├── adapters/nextonton.mjs  # Nextonton（公開API・ブラウザ不要・同名はパスワードで上書き・送信後にサーバー側を確認）
         ├── adapters/chousei.mjs    # 調整さん（埋め込みJSON＋表UI）
         ├── adapters/yotei.mjs      # よていくん（window.S＋表の選択・同名の uid で上書き・送信後にサーバー側を確認）
         ├── logger.mjs              # 要約出力＋JSONLログ
@@ -195,5 +207,7 @@ schedule-reply/
 | 調整さんの送信不可 | 先方UI変更。`alt`属性（`<候補>_まる/さんかく/ばつ`）の書式を確認 |
 | tonton の入力が反映されない／位置ズレ | `/add.php` の `mtgtime_flg_N` 書式変更を確認（位置=HH×2+MM/30、`5`○/`1`×/`-`非提案） |
 | tonton が重複登録される | `browser.tontonEditPassword` 未設定。設定すれば再回答時に旧エントリを削除して上書き |
+| Nextonton で「無料枠を使い切った」「回数制限」 | 先方の制限。毎朝9時（無料枠）・1分程度（回数制限）で戻る。メールは処理済みにならず次回に再試行される |
+| Nextonton で「編集パスワードが config と合わない」「回答が2件ある」 | 同名の回答を別のパスワードで入れた。回答ページで自分の行を直す・消してから再実行する |
 | よていくんで「表の日付が想定と違う」 | 先方の日付の展開（`getEventDates`）が変わった。`app.js` の `getEventDates`・`getSlots` と `adapters/yotei.mjs` の `eventDates`・`slotStarts` を突き合わせる |
 | よていくんで「サーバー側の回答が一致しない」 | 保存がローカルに留まった（通信・認証の失敗）か、同名の確認ダイアログで止まった。結果画面を開いて自分の行を確かめ、再実行する（同名の行を上書きするので重複しない） |

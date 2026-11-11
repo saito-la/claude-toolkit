@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// AI秘書: 日程調整メール自動回答（tonton / 調整さん / よていくん）— シングルユーザー向け
+// AI秘書: 日程調整メール自動回答（tonton / Nextonton / 調整さん / よていくん）— シングルユーザー向け
 //
-// 1) Gmail inbox を検索（in:inbox + tonton/調整さん/よていくん URL）
+// 1) Gmail inbox を検索（in:inbox + tonton/Nextonton/調整さん/よていくん URL）
 // 2) 入力依頼か判定・除外（config.exclude で設定した送信者・件名パターン）
 // 3) 回答ページを開き候補日時を取得
 // 4) Googleカレンダーの空きを平日8-17時で判定（◯/△/✕。祝日は✕）
@@ -110,7 +110,9 @@ async function main() {
     // --- 3-6) process one poll ---
     try {
       const adapter = getAdapter(c.tool);
-      const result = await withBrowser(cfg.browser?.headless ?? true, async (page) => {
+      // An adapter that talks to a public API (needsBrowser === false) gets page = null.
+      const run = adapter.needsBrowser === false ? (fn) => fn(null) : (fn) => withBrowser(cfg.browser?.headless ?? true, fn);
+      const result = await run(async (page) => {
         const { title, candidates } = await adapter.scrape(page, c.url);
         if (!candidates.length) return { title, candidates: [], empty: true };
 

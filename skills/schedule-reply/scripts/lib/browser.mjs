@@ -4,8 +4,9 @@ import { execFile } from 'node:child_process';
 import * as tonton from './adapters/tonton.mjs';
 import * as chousei from './adapters/chousei.mjs';
 import * as yotei from './adapters/yotei.mjs';
+import * as nextonton from './adapters/nextonton.mjs';
 
-const ADAPTERS = { tonton, chousei, yotei };
+const ADAPTERS = { tonton, nextonton, chousei, yotei };
 export const getAdapter = (tool) => ADAPTERS[tool];
 
 export async function withBrowser(headless, fn) {

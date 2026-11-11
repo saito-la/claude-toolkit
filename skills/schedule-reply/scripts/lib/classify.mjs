@@ -7,6 +7,7 @@
 
 const TOOLS = [
   { name: 'tonton',   re: /https?:\/\/tonton\.amaneku\.com\/list\.php\?id=([A-Za-z0-9_]+)/i },
+  { name: 'nextonton', re: /https?:\/\/nextonton\.inotai\.net\/e\/([A-Za-z0-9_-]+)/i },
   { name: 'chousei',  re: /https?:\/\/chouseisan\.com\/s\?h=([0-9a-f]+)/i },
   { name: 'yotei',    re: /https?:\/\/yotei-kun\.jp\/(?:s\/|#event\/)([A-Za-z0-9]+)/i },
 ];
@@ -76,7 +77,7 @@ export function classify(mail, cfg) {
     const inQuote = TOOLS.some((t) => t.re.test(mail.body || ''));
     return { matched: false, reason: inQuote
       ? '日程調整ツールのURLは引用（過去スレッド）内のみ＝メインは日程調整依頼でない'
-      : 'no tonton/調整さん/よていくん answer URL' };
+      : 'no tonton/Nextonton/調整さん/よていくん answer URL' };
   }
 
   // 2) exclusions (checked before "matched" so we can log the skip reason)

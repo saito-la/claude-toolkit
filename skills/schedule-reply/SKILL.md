@@ -1,17 +1,17 @@
 ---
 name: schedule-reply
-description: tonton／調整さん／よていくん（yotei-kun.jp）の日程調整入力依頼メールに、カレンダーの空き（config.availabilityで設定した営業時間）でconfig.displayNameの名義で自動回答するスキル。Gmailのinboxを検知し、空き判定→自動入力・送信→送信後にブラウザで確認→処理済みメールを Scheduling ラベルへ移動＋既読化する。「日程調整メールに回答して」「tonton/調整さん/よていくんに回答して」「予定くんに入力して」「スケジューラを回して」「日程調整の自動回答をして」等でトリガーする。実体は scripts/poll.mjs の Node CLI（このスキルは呼び出し口）。要個別セットアップ（config.json作成・Google認証・Playwright）。
+description: tonton／Nextonton（nextonton.inotai.net）／調整さん／よていくん（yotei-kun.jp）の日程調整入力依頼メールに、カレンダーの空き（config.availabilityで設定した営業時間）でconfig.displayNameの名義で自動回答するスキル。Gmailのinboxを検知し、空き判定→自動入力・送信→送信後にブラウザで確認→処理済みメールを Scheduling ラベルへ移動＋既読化する。「日程調整メールに回答して」「tonton/Nextonton/調整さん/よていくんに回答して」「予定くんに入力して」「スケジューラを回して」「日程調整の自動回答をして」等でトリガーする。実体は scripts/poll.mjs の Node CLI（このスキルは呼び出し口）。要個別セットアップ（config.json作成・Google認証・Playwright）。
 ---
 
 # schedule-reply — 日程調整メール自動回答
 
-tonton／調整さん／よていくんの日程調整入力依頼メールを検知し、カレンダーの空きを config.availability で設定した営業時間で判定して config.displayName の名義で自動回答する。**このSKILL.mdが置かれているディレクトリを基準に、`scripts/poll.mjs` を実行すること。**symlink経由で読み込まれていても、実体のディレクトリを解決してから使う。仕様の正本は `scripts/README.md`。
+tonton／Nextonton／調整さん／よていくんの日程調整入力依頼メールを検知し、カレンダーの空きを config.availability で設定した営業時間で判定して config.displayName の名義で自動回答する。**このSKILL.mdが置かれているディレクトリを基準に、`scripts/poll.mjs` を実行すること。**symlink経由で読み込まれていても、実体のディレクトリを解決してから使う。仕様の正本は `scripts/README.md`。
 
 **利用には個別セットアップが必須**（自分の `config.json` 作成・Google OAuth・Playwright）。詳細は `scripts/README.md` の「セットアップ」参照。
 
 ## 用途
 
-- ユーザーが「日程調整メールに回答して」「tonton/調整さん/よていくんに回答して」「スケジューラを回して」等と言ったとき（inbox内の未処理案件を一括処理）。
+- ユーザーが「日程調整メールに回答して」「tonton/Nextonton/調整さん/よていくんに回答して」「スケジューラを回して」等と言ったとき（inbox内の未処理案件を一括処理）。
 - ユーザーが特定の1通（Message-ID・件名・URL等で指定）だけへの回答を求めたとき（下記「単発指定」参照）。
 - 送信せず判定だけ見たいときは dry-run で実行する。
 
@@ -47,8 +47,8 @@ tonton／調整さん／よていくんの日程調整入力依頼メールを�
 ## 注意
 
 - 実在ポーリング（メール差出人に見える）への書き込みを伴う。誤検知が疑わしいときは先に `--dry-run` で確認する。
-- tonton は同名＋パスワード（`config.browser.tontonEditPassword`）で既存回答を削除して上書きするため再実行しても重複しない。よていくんは同名の回答の uid を使い回して上書きする（パスワード不要）。
-- 誤って送信した回答は取り消せる。tonton は回答ページで自分の名前の削除リンク→編集パスワード入力。調整さんは自分の名前をクリック→「登録を削除」。よていくんは回答者が行を消せないため、正しい空きで再実行して上書きする。
+- tonton は同名＋パスワード（`config.browser.tontonEditPassword`）で既存回答を削除して上書きするため再実行しても重複しない。Nextonton も同名＋同じパスワードで上書きする（パスワードは登録に必須で、合わなければエラーで止まり重複は作らない）。よていくんは同名の回答の uid を使い回して上書きする（パスワード不要）。
+- 誤って送信した回答は取り消せる。tonton は回答ページで自分の名前の削除リンク→編集パスワード入力。Nextonton は自分の行→パスワード入力→削除。調整さんは自分の名前をクリック→「登録を削除」。よていくんは回答者が行を消せないため、正しい空きで再実行して上書きする。
 - 無人自動巡回は launchd（`scripts/schedule-reply.plist.example`）で別途設定。本スキルは会話経由の都度実行用。
 
 ## 参照
