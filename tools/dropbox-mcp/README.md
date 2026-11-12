@@ -1,5 +1,7 @@
+# dropbox-mcp
+
 作成日：2026-09-07
-改訂日：2026-09-13
+改訂日：2026-11-12
 
 ## これは何か
 
@@ -66,7 +68,7 @@ claude mcp add dropbox-<用途や本人を示すラベル> \
 https://www.dropbox.com/oauth2/authorize?client_id=<App_key>&response_type=code&token_access_type=offline
 ```
 
-ブラウザで対象アカウントとして認可すると code が表示されるので、`https://api.dropboxapi.com/oauth2/token` へ `grant_type=authorization_code` と `code` を POST する（認証は App key/secret の Basic）。返る `refresh_token` を `{"refresh_token": "..."}` の形で `DROPBOX_TOKEN_FILE` へ書き、権限を 600 にする。
+ブラウザで対象アカウントとして認可すると code が表示されるので、`https://api.dropboxapi.com/oauth2/token` へ `grant_type=authorization_code` と `code` を POST する（認証は App key/secret の Basic）。返る `refresh_token` の値だけを、JSON にせずそのまま `DROPBOX_TOKEN_FILE` へ書き、権限を 600 にする。`dropbox_auth_exchange_code` が保存するのと同じ形で、`index.mjs` はファイルの中身をそのまま refresh token として読む（`{"refresh_token": "..."}` の形で書くと認証に失敗する）。
 
 **応答の `scope` を確認する。** 読み取りだけで足りる用途なら `account_info.read files.content.read files.metadata.read` になっているはず。書き込み権限が入っていたら、App の Permissions を絞って認可し直す。
 
