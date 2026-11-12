@@ -10,6 +10,8 @@
   audio-transcribe.py <音声ファイル> --split      # 最初から分割モード
   audio-transcribe.py <_parts/ ディレクトリ>      # 分割済みチャンクをそのまま処理
   audio-transcribe.py <音声> --context ctx.txt    # 固有名詞・発言者候補を文脈として注入
+  audio-transcribe.py <音声> --draft              # 下書き：再試行・再分割せず1回ずつ（会議の範囲を決める1回目）
+  audio-transcribe.py <音声> --start 3:10 --end 1:05:30   # 会議の範囲だけ（範囲の外は送らない。済チャンクは再利用）
   audio-transcribe.py --check-numbers <transcript> <summary>  # 要約の数値欠落を検査（API不要・無課金）
   audio-transcribe.py --organize-only <transcript>            # 成果物の整理だけ（API不要・無課金）
 
@@ -166,6 +168,30 @@ AUDIO_MIME_TYPES = {
     ".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav",
     ".aac": "audio/aac", ".ogg": "audio/ogg", ".flac": "audio/flac",
 }
+# 送る前に先頭の音声トラックだけを .m4a へ無劣化で取り出す形式。iPhone のボイスメモの新しい録音
+# （.qta）は AAC・空間オーディオ（apple_apac）・データの複数トラックを持ち、そのままでは送れない。
+REMUX_SUFFIXES = {".qta", ".mov"}
+
+
+def fmt_hms(sec: float) -> str:
+    """秒を「M:SS」か「H:MM:SS」にする（Part 見出しと範囲の表示用。--start/--end と同じ書式）。"""
+    sec = int(round(sec or 0))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def parse_time(s: str) -> float:
+    """「秒」「M:SS」「H:MM:SS」を秒にする（--start / --end 用）。"""
+    fields = str(s).strip().split(":")
+    if not 1 <= len(fields) <= 3:
+        raise ValueError(s)
+    sec = 0.0
+    for f in fields:
+        sec = sec * 60 + float(f)
+    if sec < 0:
+        raise ValueError(s)
+    return sec
 
 
 # ── Gemini 呼び出し（リトライ＋トークン記録） ──────────────────────
@@ -1156,6 +1182,43 @@ def split_audio(audio: Path, seg_seconds: int, tag: str = "parts") -> list:
     return chunks
 
 
+def remux_audio(src: Path, dest_dir: Path) -> Path:
+    """先頭の音声トラックを <dest_dir>/<stem>.m4a へ無劣化で取り出す（REMUX_SUFFIXES 用）。
+    元のファイルには触れない。同名が既にあれば、長さが合うときだけ使い回す。"""
+    dst = dest_dir / f"{src.stem}.m4a"
+    src_d = probe_duration(src)
+    if dst.exists():
+        d = probe_duration(dst)
+        if d and src_d and abs(d - src_d) <= 1.0:
+            print(f"取り出し済みの音声トラックを使う: {dst.name}")
+            return dst
+        sys.exit(f"エラー: {dst} が既にあり、長さが {src.name} と合わない（別の音声の可能性）。"
+                 "別の名前に退けてから再実行してください")
+    tmp = dst.with_name(dst.stem + ".part.m4a")
+    subprocess.run(["ffmpeg", "-y", "-i", str(src), "-map", "0:a:0", "-c", "copy",
+                    "-loglevel", "error", str(tmp)], check=True)
+    os.replace(tmp, dst)
+    print(f"{src.suffix} から先頭の音声トラックを取り出した: {dst}")
+    return dst
+
+
+def cut_chunk(chunk: Path, a: float, b: float) -> Path:
+    """チャンクの a〜b 秒だけを切り出す（--start / --end の境界を含むチャンク用）。
+
+    切り出しは `<チャンクのディレクトリ>/range/` に置く。チャンクと同じ場所に置くと、
+    split_audio の glob と分割済みディレクトリの指定に拾われ、範囲を指定しない次の実行で
+    余分なチャンクとして送られる。名前に秒を入れるので、範囲を変えれば別のキャッシュになり、
+    同じ範囲での再実行ならキャッシュが使われる。"""
+    rdir = chunk.parent / "range"
+    rdir.mkdir(exist_ok=True)
+    out = rdir / f"{chunk.stem}_{round(a)}-{round(b)}s{chunk.suffix}"
+    if not out.exists() or out.stat().st_size == 0:
+        subprocess.run(["ffmpeg", "-y", "-ss", f"{a:.3f}", "-i", str(chunk),
+                        "-t", f"{b - a:.3f}", "-map", "0:a:0", "-c", "copy",
+                        "-loglevel", "error", str(out)], check=True)
+    return out
+
+
 def _upload(client, path: Path):
     """ファイルをアップロードし ACTIVE になるまで待って file オブジェクトを返す。"""
     # 非ASCIIファイル名だと google-genai が HTTP ヘッダーのエンコードに失敗するため、
@@ -1279,43 +1342,97 @@ def _chunk_cache_path(chunk: Path) -> Path:
     return chunk.with_name(chunk.name + ".txt")
 
 
-def transcribe_chunks(client, chunks: list, prompt: str, model: str) -> str:
+def _transcribe_cached(client, src: Path, prompt: str, model: str, d: float,
+                       draft: bool, tag: str) -> str:
+    """1区間を、品質を満たすキャッシュがあれば再利用し、無ければ文字起こししてキャッシュする。
+
+    draft（下書き）は1回だけ送り、品質不良でも再試行・再分割しない。会議の範囲を決めるための
+    1回目に使う。会議の後の無音・雑音の区間は文字数不足で失格になりやすく、通常の回復を走らせると
+    再試行と再分割で1区間あたり十数回のリクエストを使う（どうせ範囲の外として捨てる区間に）。
+    下書きで失格した結果はキャッシュしない。キャッシュすると、`[要確認]` の注記の文字数で
+    再検査を通ってしまうことがあり、範囲を決めた2回目で取り直されなくなる。"""
+    min_chars = int(d * MIN_CHARS_PER_SEC) if d else None
+    max_chars = int(d * MAX_CHARS_PER_SEC) if d else None
+    cache = _chunk_cache_path(src)
+    if cache.exists() and cache.stat().st_size > 0:
+        cached = cache.read_text(encoding="utf-8")
+        ok, why = check_quality(cached, min_chars=min_chars, max_chars=max_chars,
+                                duration_sec=d)
+        if ok:                                    # 品質を満たす済チャンクのみ再利用
+            print(f"{tag} キャッシュ再利用: {cache.name}")
+            # 再利用した区間も品質ログに残す（API を呼んでいないので attempts=0）。
+            # 残さないと区間別の明細に穴が空き、この実行で取り直した区間だけが
+            # 全体であるかのように読める。
+            _record_quality(src.name, d, cached, True, "", 0,
+                            source="cache", key_label=None)
+            return cached
+        print(f"{tag} キャッシュを破棄して取り直し（{why}）")
+    print(tag, end=" ")
+    if draft:
+        text = normalize_lines(collapse_loops(transcribe_file(client, src, prompt, model)))
+        ok, why = check_quality(text, min_chars=min_chars, max_chars=max_chars, duration_sec=d)
+        _record_quality(src.name, d, text, ok, why, 1, flagged=not ok)
+        if not ok:
+            print(f"    ⚠ 品質不良（下書きなので取り直さない）: {why}")
+            return f"[要確認: 下書き・品質不良（{why}）]\n{text}"
+    else:
+        text = transcribe_with_recovery(client, src, prompt, model, "transcribe", d)
+    cache.write_text(text, encoding="utf-8")      # チェックポイント保存
+    return text
+
+
+def transcribe_chunks(client, chunks: list, prompt: str, model: str,
+                      start: float = None, end: float = None, draft: bool = False) -> str:
     """チャンクを順次文字起こしして Part ヘッダー付きで結合する。
     成功済みチャンクは <chunk>.txt にキャッシュし、再実行時は品質を満たすものを再利用する
-    （失敗ジョブを丸ごと再実行しても全チャンクを再送信せず、無料枠の無駄消費を防ぐ）。"""
+    （失敗ジョブを丸ごと再実行しても全チャンクを再送信せず、無料枠の無駄消費を防ぐ）。
+
+    start / end（入力音声の先頭からの秒）を渡すと、その範囲だけを文字起こしする。範囲の外の
+    チャンクは送らず、境界を含むチャンクだけを切り出して送る。範囲の内のチャンクは範囲なしの
+    実行と同じファイルなので、下書きで取れたキャッシュがそのまま使われる。
+
+    タイムスタンプは各 Part を入力音声の時間軸（先頭からの経過）にずらして連結する。
+    Part 見出しにも入力音声での位置を書く。会議の範囲を決めるときに、そのまま --start/--end に
+    渡せるようにするため。キャッシュはチャンク内の時刻のまま持つ（品質検査がチャンクの尺で行うため）。"""
     if not chunks:
         raise FileNotFoundError("音声チャンクが見つかりません")
-    n = len(chunks)
+    spans, off = [], 0.0                      # (チャンク, 入力音声での開始秒, 尺)
+    for c in chunks:
+        d = probe_duration(c) or 0.0
+        spans.append((c, off, d))
+        off += d
+    lo = start or 0.0
+    hi = end if end is not None else off
+    plan = []
+    for i, (c, o, d) in enumerate(spans):
+        a, b = max(lo - o, 0.0), min(hi - o, d)
+        whole = a < 0.5 and b > d - 0.5
+        if b <= a or (not whole and b - a < 1.0):  # 範囲の外（1秒未満の切れ端も送らない）
+            continue
+        plan.append((i, c, o, d, 0.0 if whole else a, d if whole else b, whole))
+    if not plan:
+        sys.exit(f"エラー: 指定した範囲（{fmt_hms(lo)}〜{fmt_hms(hi)}）に入る音声が無い"
+                 f"（音声の長さ {fmt_hms(off)}）")
+    n = len(spans)
     rpd = FREE_TIER_RPD.get(model)
     rpd_note = f"無料枠RPD目安 {rpd}回/日（PT基準・要確認）。" if rpd else ""
-    print(f"{n} チャンクを処理します"
-          f"（推定リクエスト数 約{n}〜{n * 2}回。{rpd_note}"
-          f"済チャンクはキャッシュ再利用）")
+    est = f"約{len(plan)}回" if draft else f"約{len(plan)}〜{len(plan) * 2}回"
+    print(f"{len(plan)} チャンクを処理します"
+          f"（推定リクエスト数 {est}。{rpd_note}済チャンクはキャッシュ再利用）")
+    if start is not None or end is not None:
+        print(f"  範囲: {fmt_hms(lo)}〜{fmt_hms(min(hi, off))}（音声の長さ {fmt_hms(off)}）。"
+              f"範囲の外の {n - len(plan)} チャンクは送らない")
+    if draft:
+        print("  下書き: 品質不良でも再試行・再分割しない")
     parts, covered = [], 0.0
-    for i, chunk in enumerate(chunks):
-        d = probe_duration(chunk)
-        covered += d or 0
-        min_chars = int(d * MIN_CHARS_PER_SEC) if d else None
-        max_chars = int(d * MAX_CHARS_PER_SEC) if d else None
-        cache = _chunk_cache_path(chunk)
-        if cache.exists() and cache.stat().st_size > 0:
-            cached = cache.read_text(encoding="utf-8")
-            ok, why = check_quality(cached, min_chars=min_chars, max_chars=max_chars,
-                                    duration_sec=d)
-            if ok:                                    # 品質を満たす済チャンクのみ再利用
-                print(f"[{i + 1}/{n}] キャッシュ再利用: {cache.name}")
-                # 再利用した区間も品質ログに残す（API を呼んでいないので attempts=0）。
-                # 残さないと区間別の明細に穴が空き、この実行で取り直した区間だけが
-                # 全体であるかのように読める。
-                _record_quality(chunk.name, d, cached, True, "", 0,
-                                source="cache", key_label=None)
-                parts.append(f"## Part {i + 1} — {chunk.name}\n\n{cached}")
-                continue
-            print(f"[{i + 1}/{n}] キャッシュを破棄して取り直し（{why}）")
-        print(f"[{i + 1}/{n}]", end=" ")
-        text = transcribe_with_recovery(client, chunk, prompt, model, "transcribe", d)
-        cache.write_text(text, encoding="utf-8")      # チェックポイント保存
-        parts.append(f"## Part {i + 1} — {chunk.name}\n\n{text}")
+    for i, chunk, o, d, a, b, whole in plan:
+        src = chunk if whole else cut_chunk(chunk, a, b)
+        dd = d if whole else (probe_duration(src) or (b - a))
+        covered += dd
+        text = _transcribe_cached(client, src, prompt, model, dd, draft, f"[{i + 1}/{n}]")
+        head = f"## Part {i + 1} — {chunk.name}（{fmt_hms(o + a)}〜{fmt_hms(o + a + dd)}"
+        head += "）" if whole else f"。範囲の境界で切り出し）"
+        parts.append(f"{head}\n\n{_shift_timestamps(text, o + a)}")
     print(f"カバレッジ: 約 {covered/60:.1f} 分ぶんのチャンクを処理")
     return "\n\n---\n\n".join(parts)
 
@@ -1592,6 +1709,21 @@ def main():
     p.add_argument("--rpd", type=int, metavar="N",
                    help="無料枠の1日リクエスト数（RPD）目安を上書き（本日消費表示用。既定 250）")
     p.add_argument("--context", help="固有名詞・発言者候補を書いたテキストファイル（プロンプトに注入）")
+
+    def _time_arg(s):
+        try:
+            return parse_time(s)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"時刻は 秒・M:SS・H:MM:SS のどれかで書く: {s}")
+
+    p.add_argument("--draft", action="store_true",
+                   help="下書き：各チャンクを1回だけ送り、品質不良でも再試行・再分割しない。"
+                        "会議の範囲（--start/--end）を決めるための1回目に使う（SKILL.md Step 2）")
+    p.add_argument("--start", type=_time_arg, metavar="時刻",
+                   help="この位置より前を文字起こししない（入力音声の先頭からの 秒・M:SS・H:MM:SS）")
+    p.add_argument("--end", type=_time_arg, metavar="時刻",
+                   help="この位置より後ろを文字起こししない。範囲の外のチャンクは送らず、"
+                        "境界を含むチャンクだけを切り出して送る（範囲の内はキャッシュを再利用）")
     p.add_argument("--check-numbers", nargs=2, metavar=("TRANSCRIPT", "SUMMARY"),
                    help="要約から落ちた金額・台数と、原文に無い数値を検査するだけ（API 不要・無課金）。"
                         "Claude が作った要約の検証に使う")
@@ -1602,6 +1734,8 @@ def main():
     p.add_argument("--no-key-pool", action="store_true",
                    help="キーをプールしない（GEMINI_API_KEY_POOL を無視し、既定のキー1本だけを使う）")
     a = p.parse_args()
+    if a.start is not None and a.end is not None and a.start >= a.end:
+        p.error(f"--start（{fmt_hms(a.start)}）が --end（{fmt_hms(a.end)}）より後ろにある")
 
     # ── 数値チェックのみ（API を呼ばない＝無課金） ──────────────────────
     # 要約から金額・台数が落ちるのはプロンプトでは防ぎきれない（2026-08-04 実測で保持率 35%、
@@ -1704,24 +1838,32 @@ def main():
         out = target.parent / f"{target.stem}_transcript.txt"
     stem = out.stem[:-len("_transcript")] if out.stem.endswith("_transcript") else out.stem
 
+    ranged = a.start is not None or a.end is not None
+    rng = dict(start=a.start, end=a.end, draft=a.draft)
+
     # ── チャンクディレクトリが渡された場合 ──────────────────
     if target.is_dir():
         chunks = sorted(f for f in target.iterdir()
                         if f.suffix in AUDIO_SUFFIXES and "_part" in f.name)
-        result = transcribe_chunks(client, chunks, prompt, model)
+        result = transcribe_chunks(client, chunks, prompt, model, **rng)
     else:
         if not target.exists():
             sys.exit(f"エラー: ファイルが見つかりません: {target}")
+        if target.suffix.lower() in REMUX_SUFFIXES:
+            target = remux_audio(target, out.parent)
         if target.suffix not in AUDIO_SUFFIXES:
             sys.exit(f"エラー: 対応していない形式: {target.suffix}")
 
         duration = probe_duration(target)
         long_audio = duration and duration > LONG_AUDIO_THRESHOLD_SEC
-        if a.split or long_audio:
-            why = "指定" if a.split else f"{duration/60:.0f}分 > {LONG_AUDIO_THRESHOLD_SEC//60}分"
+        # 範囲を指定したときは短い音声でも分割モードにする。境界の切り出しとキャッシュの
+        # 使い回しを分割モードの1か所に寄せるため（15分以下なら1チャンクになるだけ）。
+        if a.split or long_audio or ranged:
+            why = ("指定" if a.split else "範囲の指定" if ranged and not long_audio
+                   else f"{duration/60:.0f}分 > {LONG_AUDIO_THRESHOLD_SEC//60}分")
             print(f"分割モード（{why}）: {target.name}")
             chunks = split_audio(target, a.chunk_minutes * 60, "parts")
-            result = transcribe_chunks(client, chunks, prompt, model)
+            result = transcribe_chunks(client, chunks, prompt, model, **rng)
         else:
             print(f"単一ファイルモード: {target.name}")
             text = collapse_loops(transcribe_file(client, target, prompt, model))
@@ -1731,6 +1873,10 @@ def main():
                 result = text
                 _record_quality(target.name, duration, text, True, "", 1)
                 print("品質チェック: OK")
+            elif a.draft:
+                result = f"[要確認: 下書き・品質不良（{why}）]\n{text}"
+                _record_quality(target.name, duration, text, False, why, 1, flagged=True)
+                print(f"\n⚠ 品質チェック失敗 — {why}（下書きなので取り直さない）")
             else:
                 print(f"\n⚠ 品質チェック失敗 — {why}\n自動で分割モードに切り替えます...")
                 chunks = split_audio(target, a.chunk_minutes * 60, "parts")
@@ -1738,6 +1884,11 @@ def main():
 
     out.write_text(result, encoding="utf-8")
     print(f"\n文字起こし完了: {out}")
+    if a.draft:
+        print("\nこれは下書き。会議の始まりと終わりを内容から決め、--draft を外して"
+              "\n--start/--end を付けて同じコマンドを再実行する（SKILL.md Step 2）。"
+              "\n範囲の内の合格したチャンクはキャッシュが使われ、送り直すのは境界と失格の区間だけ。"
+              "\n範囲を切らず、全区間が合格なら、この下書きがそのまま本番になる。")
 
     write_usage_report(out.parent, stem)
     # 整理はここでは行わない。summary がまだ無い段階（話者比定の作業用に transcript を
