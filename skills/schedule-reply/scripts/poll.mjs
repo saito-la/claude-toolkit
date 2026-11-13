@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // AI秘書: 日程調整メール自動回答（tonton / Nextonton / 調整さん / よていくん）— シングルユーザー向け
 //
-// 1) Gmail inbox を検索（in:inbox + tonton/Nextonton/調整さん/よていくん URL）
+// 1) Gmail inbox を検索（in:inbox + tools.json の各ツールのドメイン。--only なら指定の1通だけを取る）
 // 2) 入力依頼か判定・除外（config.exclude で設定した送信者・件名パターン）
 // 3) 回答ページを開き候補日時を取得
 // 4) Googleカレンダーの空きを平日8-17時で判定（◯/△/✕。祝日は✕）
@@ -10,7 +10,8 @@
 // 7) 処理済みメールを "Scheduling" へ移動・既読化
 //
 // Usage: node poll.mjs [--dry-run] [--verbose] [--config <path>] [--only <GmailメッセージID>] [--no-label]
-// --only は inbox 内の該当1通のみを処理する（会話経由の単発依頼向け。省略時は従来通り未処理分を全件処理）。
+// --only は指定した1通だけを ID で取って処理する（検索の条件・受信トレイの有無によらない。会話経由の単発依頼と
+// 受信メールの自動処理から1通ずつ呼ぶ用。省略時は受信トレイを検索して未処理分を全件処理）。
 // --no-label は処理済みのメールにラベルを付けず、受信トレイから外す（と既読化）だけにする。処理の記録を
 // 呼び出し側が持つとき（受信メールの自動処理から1通ずつ呼ぶなど）に使う。
 //
@@ -78,26 +79,27 @@ async function main() {
   const skips = [];
 
   // --- 1) search inbox ---
-  // The query is built from the tool list in classify.mjs. A searchQuery left in an old config is
-  // ignored: it was a per-machine copy of that list and silently missed every tool added later.
+  // --only fetches that one mail by ID (the caller already chose it); otherwise search the inbox.
+  // The query is built from tools.json. A searchQuery left in an old config is ignored: it was a
+  // per-machine copy of the tool list and silently missed every tool added later.
   if (cfg.gmail.searchQuery) {
-    console.error(`⚠ config の gmail.searchQuery は使わなくなったので無視します（対応ツールから組み立てる）。${args.config} から消してください。期間を変えるなら gmail.newerThanDays。`);
+    console.error(`⚠ config の gmail.searchQuery は使わなくなったので無視します（tools.json から組み立てる）。${args.config} から消してください。期間を変えるなら gmail.newerThanDays。`);
   }
-  const query = searchQuery(cfg);
-  if (args.verbose) console.error(`query: ${query}`);
-  const allMsgs = await gmail.searchMessages(query, 25);
-  const msgs = args.only ? allMsgs.filter((m) => m.id === args.only) : allMsgs;
-  if (args.verbose) {
-    console.error(`inbox hits: ${allMsgs.length}`);
-    if (args.only) console.error(`--only ${args.only} で絞り込み: ${msgs.length}件`);
-  }
-  if (args.only && !msgs.length) {
-    console.error(`--only で指定したメッセージがinbox検索結果にありません（既読/処理済み/検索クエリ対象外の可能性）: ${args.only}`);
+  let msgs;
+  if (args.only) {
+    msgs = [{ id: args.only }];
+  } else {
+    const query = searchQuery(cfg);
+    msgs = await gmail.searchMessages(query, 25);
+    if (args.verbose) console.error(`query: ${query}\ninbox hits: ${msgs.length}`);
   }
 
   let handled = 0;
   for (const { id } of msgs) {
-    if (processed.has(id)) continue;
+    if (processed.has(id)) {
+      if (args.only) console.error(`処理済みの記録（state.jsonl）にあるので何もしません: ${id}`);
+      continue;
+    }
     const mail = parseMessage(await gmail.getMessage(id));
     const c = classify(mail, cfg);
 

@@ -79,14 +79,14 @@ cp "$SCRIPTS/config.example.json" ~/.config/schedule-reply/config.json
 chmod 700 ~/.config/schedule-reply && chmod 600 ~/.config/schedule-reply/config.json
 #   - displayName / 除外リスト / businessStart-End を自分の値に設定
 #   - gmail/calendar の credentialsPath を自分のGoogle OAuth認証情報のパスに合わせる
-#   - Gmail の検索条件は書かない（対応ツールの一覧 lib/classify.mjs の TOOLS から組み立てる）。遡る日数だけ gmail.newerThanDays（既定14）で変えられる
+#   - Gmail の検索条件は書かない（対応ツールの一覧 tools.json から組み立てる）。遡る日数だけ gmail.newerThanDays（既定14）で変えられる
 #   - flags.dryRun を false にすると送信あり（既定運用）。true なら判定のみ
 
 # 3) 実行（cwd 非依存。config は自動で ~/.config/schedule-reply/config.json が使われる）
 node "$SCRIPTS/poll.mjs"            # 送信あり（config.flags.dryRun=false のとき）＋送信後にブラウザで確認
 node "$SCRIPTS/poll.mjs" --send     # config に関わらず強制的に送信
 node "$SCRIPTS/poll.mjs" --dry-run  # 送信せず判定のみ（安全確認・冪等）
-node "$SCRIPTS/poll.mjs" --send --only <Gmailメッセージid>  # inbox内の該当1通だけを処理（他の未処理案件を巻き込まない）
+node "$SCRIPTS/poll.mjs" --send --only <Gmailメッセージid>  # 該当の1通だけを ID で取って処理（検索の条件・受信トレイの有無によらない。他の未処理案件を巻き込まない）
 ```
 
 `--verbose` を付けると、実際に読んだ config のパスが1行目に出る。config を複数使い分けるときは `--config <path>` で指定する（`state.jsonl`・`logs/` もそのパスの隣に作られる）。
@@ -145,7 +145,7 @@ launchctl unload ~/Library/LaunchAgents/com.schedule-reply.plist
 
 実装済みの制約は以下。
 
-- 検索条件は `lib/classify.mjs` の `TOOLS`（対応ツールの唯一の一覧）から組み立てる：`in:inbox (<各ツールのドメイン> を OR) newer_than:<gmail.newerThanDays、既定14>d`。ツールを足すときは `TOOLS` に1行足すだけで、各端末の config を直す必要は無い。2026-11-11 までは config の `gmail.searchQuery` に端末ごとの写しがあり、ツールを足すたびに全端末で直す必要があった（よていくん・Nextonton が写しから漏れた）。古い config に `searchQuery` が残っていると、無視して警告を出す。
+- 対応ツールの一覧は `tools.json` の1か所だけに置く（ツール名・Gmail で探すドメイン・回答ページの URL の正規表現。正規表現の1つ目のグループが調整の ID）。検索条件 `in:inbox (<各ツールのドメイン> を OR) newer_than:<gmail.newerThanDays、既定14>d` も、本文の URL の判別（`lib/classify.mjs`）もここから作る。ツールを足すときは `tools.json` に1行と `lib/adapters/<名前>.mjs` を足し、`lib/browser.mjs` の一覧に登録するだけで、各端末の config を直す必要は無い。受信メールを振り分ける別の仕組みからこのスキルへ回すときも、URL の正規表現を写さずにこのファイルを読ませる。2026-11-11 までは config の `gmail.searchQuery` に端末ごとの写しがあり、ツールを足すたびに全端末で直す必要があった（よていくん・Nextonton が写しから漏れた）。古い config に `searchQuery` が残っていると、無視して警告を出す。
 - 対象は **inbox 内のみ**（`in:inbox`）。処理後は `Scheduling` へ移動し inbox から外す＝再検知防止。再検知を防ぐのは inbox から外すことなので、config の `gmail.schedulingLabel` を空にすればラベルを付けずに外すだけになる。
 - 空き判定は `config.availability` で設定した営業日・時間帯（既定：平日8:00–17:00）。範囲外は候補にしない。
 - 参照カレンダーは `config.calendar.calendarIds` で指定したもののみ。
@@ -176,9 +176,10 @@ schedule-reply/
     ├── run.sh                      # launchd 起動ラッパ（PATH整備のみ）
     ├── schedule-reply.plist.example # launchd定義のひな型（要パス置換）
     ├── config.example.json         # 設定ひな型
+    ├── tools.json                  # 対応ツールの唯一の一覧（名前・ドメイン・回答URLの正規表現）
     └── lib/
         ├── google.mjs              # OAuth更新＋Gmail/Calendar REST（fetchのみ・依存ゼロ）
-        ├── classify.mjs            # 対応ツールの一覧（TOOLS）・検索条件の組み立て・ツール判別・入力依頼判定・除外
+        ├── classify.mjs            # tools.json の読み込み・検索条件の組み立て・ツール判別・入力依頼判定・除外
         ├── availability.mjs        # 平日8-17＋freeBusy＋祝日 → ◯/△/✕
         ├── browser.mjs             # Playwright起動＋アダプタ振り分け＋確認用オープン（needsBrowser=false のアダプタはブラウザを起動しない）
         ├── adapters/tonton.mjs     # tonton（/add.php 直接POST・mtgtime_flg・重複時は削除して上書き）

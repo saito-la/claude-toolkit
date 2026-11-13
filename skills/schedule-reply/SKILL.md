@@ -20,7 +20,7 @@ tonton／Nextonton／調整さん／よていくんの日程調整入力依頼�
 1. スケジューラを実行する。
    - 送信あり・一括（既定）：`node <このSKILL.mdのディレクトリ>/scripts/poll.mjs --send --verbose`
    - 判定のみ（安全確認）：`node <このSKILL.mdのディレクトリ>/scripts/poll.mjs --dry-run --verbose`
-   - **単発指定**（ユーザーが特定の1通だけを指定したとき、必須）：まず gmail 検索（Message-ID指定なら `rfc822msgid:<Message-ID>`）でGmail内部IDを特定し、`node <このSKILL.mdのディレクトリ>/scripts/poll.mjs --send --verbose --only <GmailメッセージID>` を実行する。**これを省略すると inbox 内の他の未処理案件（別件の日程調整）も一括で自動送信されてしまう**（実例：2026-08-03、1件だけ依頼されたのに inbox に溜まっていた他2件も巻き込みで送信された）。
+   - **単発指定**（ユーザーが特定の1通だけを指定したとき、必須）：まず gmail 検索（Message-ID指定なら `rfc822msgid:<Message-ID>`）でGmail内部IDを特定し（受信トレイから外れたメールでもよい）、`node <このSKILL.mdのディレクトリ>/scripts/poll.mjs --send --verbose --only <GmailメッセージID>` を実行する。**これを省略すると inbox 内の他の未処理案件（別件の日程調整）も一括で自動送信されてしまう**（実例：2026-08-03、1件だけ依頼されたのに inbox に溜まっていた他2件も巻き込みで送信された）。
 2. 標準出力の要約（ツール・候補数・件名・候補ごとの ◯/△/✕ と根拠・スキップ理由）をそのままユーザーへ報告する。
 3. 送信した場合、CLI が回答ページを既定ブラウザで開く。ユーザーに内容確認を促す。
 4. 処理済みメールは自動で inbox→「Scheduling」へ移動・既読化される（`gmail.modify` 付与済み。未付与時はスキップ警告が出る）。config の `gmail.schedulingLabel` を空にすると、ラベルを付けず受信トレイから外す（と既読化）だけにする。

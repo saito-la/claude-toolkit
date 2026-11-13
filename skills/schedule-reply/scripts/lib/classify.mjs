@@ -5,17 +5,16 @@
 // notification/reply email often quotes an old thread that contained a poll URL; the
 // answer URL must appear in the email's own main message, not in the quoted part.
 
-// The one list of supported tools. The Gmail search (searchQuery below) is built from `domain`,
-// so adding a tool here is all it takes — no per-machine config to update.
-export const TOOLS = [
-  { name: 'tonton',    domain: 'tonton.amaneku.com',   re: /https?:\/\/tonton\.amaneku\.com\/list\.php\?id=([A-Za-z0-9_]+)/i },
-  { name: 'nextonton', domain: 'nextonton.inotai.net', re: /https?:\/\/nextonton\.inotai\.net\/e\/([A-Za-z0-9_-]+)/i },
-  { name: 'chousei',   domain: 'chouseisan.com',       re: /https?:\/\/chouseisan\.com\/s\?h=([0-9a-f]+)/i },
-  { name: 'yotei',     domain: 'yotei-kun.jp',         re: /https?:\/\/yotei-kun\.jp\/(?:s\/|#event\/)([A-Za-z0-9]+)/i },
-];
+// The supported tools are listed once, in ../tools.json (name, Gmail search domain, answer-URL regex
+// with the poll ID as group 1). It is data, not code, so another system that routes mail here can
+// read the same file instead of keeping its own copy of the URL patterns.
+import { readFileSync } from 'node:fs';
 
-// Gmail query for candidate mails: inbox only (moving a processed mail out of the inbox is what
-// stops it being picked up again), any supported tool's domain, received within newerThanDays.
+export const TOOLS = JSON.parse(readFileSync(new URL('../tools.json', import.meta.url), 'utf8'))
+  .map((t) => ({ ...t, re: new RegExp(t.url, 'i') }));
+
+// Gmail query: inbox only (moving a processed mail out of the inbox is what stops it being picked up
+// again), any supported tool's domain, received within gmail.newerThanDays (default 14).
 export function searchQuery(cfg) {
   const days = cfg.gmail?.newerThanDays ?? 14;
   return `in:inbox (${TOOLS.map((t) => t.domain).join(' OR ')}) newer_than:${days}d`;

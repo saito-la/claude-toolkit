@@ -1,0 +1,6 @@
+[
+  { "name": "tonton",    "domain": "tonton.amaneku.com",   "url": "https?://tonton\\.amaneku\\.com/list\\.php\\?id=([A-Za-z0-9_]+)" },
+  { "name": "nextonton", "domain": "nextonton.inotai.net", "url": "https?://nextonton\\.inotai\\.net/e/([A-Za-z0-9_-]+)" },
+  { "name": "chousei",   "domain": "chouseisan.com",       "url": "https?://chouseisan\\.com/s\\?h=([0-9a-f]+)" },
+  { "name": "yotei",     "domain": "yotei-kun.jp",         "url": "https?://yotei-kun\\.jp/(?:s/|#event/)([A-Za-z0-9]+)" }
+]
