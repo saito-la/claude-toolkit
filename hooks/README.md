@@ -1,9 +1,9 @@
 # hooks
 
 作成日：2026-09-28
-改訂日：2026-11-05
+改訂日：2026-11-13
 
-Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査、応答の言語の検査を収める。
+Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査、応答の言語の検査と、これらの検査を Codex CLI でも効かせる仲介を収める。
 
 ## 配置と登録
 
@@ -20,6 +20,7 @@ Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。
 - 送信の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「相手に届く送信の検査」）
 - 削除の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「削除の検査」）
 - 応答の言語の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「応答の言語の検査」）
+- Codex CLI での検査：`install.py` は登録しない。`/etc/codex/hooks.json` に管理者権限で置く（下の「Codex CLI での検査」）
 
 ## Google Chat への完了通知
 
@@ -132,6 +133,7 @@ python3 <claude-toolkit>/install.py      # webhook.env を置いたので、こ�
 - Google Calendar の招待・変更の通知（`sendUpdates` が `all`・`externalOnly`、旧来の `sendNotifications=true`）
 - Gmail の送信（`/messages/send`・`/drafts/send`、クライアントライブラリの `.send(`）
 - Slack への投稿（`chat.postMessage`）
+- MCP のツールのうち呼んだ時点で相手に届くもの（Gmail の `schedule_draft`）。ツール名の末尾で照合する
 
 送信を含まない Calendar・Gmail の操作（`sendUpdates=none`、下書きの作成・更新・削除）は通す。原則は `instructions/principles.md` の「相手に届く操作は、送ることを明示されたときだけ行う」。
 
@@ -161,6 +163,8 @@ python3 <claude-toolkit>/install.py      # webhook.env を置いたので、こ�
   }
 ]
 ```
+
+MCP の送信を検査するには、同じコマンドを `"matcher": "mcp__.*__schedule_draft"` の組でも登録する。
 
 ## 削除の検査
 
@@ -239,3 +243,30 @@ python3 <claude-toolkit>/install.py      # webhook.env を置いたので、こ�
   }
 ]
 ```
+
+## Codex CLI での検査
+
+### 仕組み
+
+`codex-guard.py` は Codex CLI の `PreToolUse` で呼び、Claude Code の検査（`~/.claude/hooks/*-guard.py`）をそのまま走らせる。どの検査をどのツールに掛けるかは `~/.claude/settings.json` の `PreToolUse` を読み、`matcher` が当てはまり、コマンドが `~/.claude/hooks/` の `*-guard.py` を呼ぶ登録だけを実行する。Codex は Claude と同じ形のツール名（シェルは `Bash`、MCP は `mcp__<server>__<tool>`）と `tool_input` を渡すので、検査の側には手を入れない。検査を足し替えたときに Codex 側を直す必要は無い。
+
+Codex の `PreToolUse` は `permissionDecision: "ask"` を扱えず、フックの失敗として記録したうえでツールを実行してしまう（[Codex の hooks の文書](https://learn.chatgpt.com/docs/hooks)）。そのため `ask` を `deny` に読み替える。Codex は確認の画面を出せないので、送る・消すと決めたら人が自分で実行する。
+
+### 経緯
+
+2026-11-13、Codex に Claude Code と同じ MCP を登録し、サンドボックスを外した。Claude Code で効いている削除と送信の検査が Codex では1つも動かないため、Codex だけが歯止めの無い状態になった。
+
+### 限界
+
+検査の限界はそれぞれの検査と同じ。Codex のフックは文書の上でも「完全な強制境界ではなくガードレール」で、`WebSearch` のようなホスト側のツールは通らない。
+
+### 登録
+
+`~/.codex/hooks.json` には置かない。ユーザーの層のフックは、Codex の `/hooks` で人が1件ずつ信頼するまで動かず（`config.toml` の `hooks.state` に記録する内容のハッシュが要る）、`codex exec` では黙って飛ばされる。システムの層（`/etc/codex/`）のフックは管理されたものとして扱われ、信頼の手続き無しに動き、無効にもできない。Orca などが `~/.codex/hooks.json` に書き込むものと混ざらない利点もある。
+
+```bash
+sudo install -d -m 755 /etc/codex
+sudo install -m 644 ~/Projects/claude-toolkit/hooks/codex-system-hooks.json /etc/codex/hooks.json
+```
+
+`codex-guard.py` 自体は `install.py` が `~/.claude/hooks/` へ置く。置かれていない端末ではフックは何もしない。

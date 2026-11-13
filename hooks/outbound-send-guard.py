@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse（Bash）：相手に届く送信を含むコマンドを、実行の直前にユーザーへ確認させる。
+"""PreToolUse（Bash・MCP）：相手に届く送信を含むコマンドとツールを、実行の直前にユーザーへ確認させる。
 
 対象はメールの送信・カレンダー招待の通知・チャットへの投稿のように、実行した瞬間に相手へ
 届いて取り消せない操作。コマンド文字列と、コマンドが実行するスクリプトファイルの中身を
@@ -19,6 +19,11 @@ PATTERNS = [
     (r"\b(?:messages|drafts)\(\)\s*\.send\(", "Gmail の送信"),
     (r"chat\.postMessage", "Slack への投稿"),
 ]
+# MCP のツールのうち、呼んだ時点で相手に届くもの（ツール名の末尾 → 表示名）。MCP の
+# サーバー名は端末ごとに変わるので、末尾だけで照合する。
+MCP_SEND_TOOLS = {
+    "schedule_draft": "Gmail の予約送信（schedule_draft）",
+}
 SCRIPT_EXT = (".py", ".mjs", ".js", ".cjs", ".ts", ".sh", ".rb")
 MAX_BYTES = 1_000_000
 
@@ -47,7 +52,11 @@ def main():
         data = json.load(sys.stdin)
     except Exception:
         return
-    if data.get("tool_name") != "Bash":
+    tool = data.get("tool_name") or ""
+    if any(tool.endswith("__" + name) for name in MCP_SEND_TOOLS):
+        ask(MCP_SEND_TOOLS[tool.rsplit("__", 1)[1]] + "［" + tool + "］")
+        return
+    if tool != "Bash":
         return
     command = (data.get("tool_input") or {}).get("command") or ""
     cwd = data.get("cwd") or os.getcwd()
@@ -64,8 +73,12 @@ def main():
             hits.append(f"{label}［{os.path.basename(p)}］")
     if not hits:
         return
+    ask("、".join(hits))
+
+
+def ask(what):
     reason = (
-        "相手に届く送信を含みます：" + "、".join(hits) + "。"
+        "相手に届く送信を含みます：" + what + "。"
         "ユーザーが「送って」と明示していなければ許可しないでください。"
         "作るだけなら通知を止める指定（Calendar は sendUpdates=none）に替え、Gmail は下書きに留めます。"
     )
