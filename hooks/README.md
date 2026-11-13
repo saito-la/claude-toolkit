@@ -278,3 +278,17 @@ osascript -e 'do shell script "install -d -m 755 /etc/codex && install -m 644 '"
 置いたあと、`codex exec` に守る場所のファイルの `rm` と MCP の `schedule_draft` を試させ、両方が止まることを確かめる（2026-11-13、okra の Codex 0.160.0 で確認）。
 
 `codex-guard.py` 自体は `install.py` が `~/.claude/hooks/` へ置く。置かれていない端末ではフックは何もしない。
+
+## 未コミットのリポジトリの検査
+
+`uncommitted-repos-check.py` は SESSION-END.md の Step 5（commit & push）を機械で支える。Stop で呼ぶ。
+
+- 検査の対象は cwd と、セッション中に Write・Edit したファイルが属する全リポジトリ。cwd だけを見ると、別プロジェクトへ書いた成果物の未コミットを見逃す（2026-11-11、jaspehr のセッションが `presentation` へ書いたデッキが未追跡のまま残った）
+- 直近のユーザー発言に「終了・終わり・終え」があり、未コミット・未 push があれば block して commit & push させる。それ以外は警告（systemMessage）だけで、同じセッションでは30分に1回まで
+- fetch はしない。未 push は upstream（無ければ `origin/main`）との差で数える
+
+```json
+"Stop": [
+  { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/uncommitted-repos-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+]
+```
