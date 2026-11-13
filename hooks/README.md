@@ -269,4 +269,12 @@ sudo install -d -m 755 /etc/codex
 sudo install -m 644 ~/Projects/claude-toolkit/hooks/codex-system-hooks.json /etc/codex/hooks.json
 ```
 
+Claude Code の `!` から打つと端末が無く、`sudo` はパスワードを読めずに止まる。その場合は macOS のパスワードの画面を出す形で置く（Claude に実行させてもよい）。
+
+```bash
+osascript -e 'do shell script "install -d -m 755 /etc/codex && install -m 644 '"$HOME"'/Projects/claude-toolkit/hooks/codex-system-hooks.json /etc/codex/hooks.json" with administrator privileges'
+```
+
+置いたあと、`codex exec` に守る場所のファイルの `rm` と MCP の `schedule_draft` を試させ、両方が止まることを確かめる（2026-11-13、okra の Codex 0.160.0 で確認）。
+
 `codex-guard.py` 自体は `install.py` が `~/.claude/hooks/` へ置く。置かれていない端末ではフックは何もしない。
