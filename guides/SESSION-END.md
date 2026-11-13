@@ -72,6 +72,19 @@
 ## Step 5: git commit & push
 - 変更ファイルをステージング → コミット → push
 - **「コミットしますか？」と聞かない**。セッション終了時は必ず commit & push する
+- **cwd のリポジトリだけを見ない。** セッション中に Write・Edit・Bash で書いた先が別のリポジトリ（別プロジェクトの案件フォルダなど）にあれば、そのリポジトリも commit & push する。cwd の `git status` は他のリポジトリの未コミットを映さない。2026-11-11、jaspehr のセッションが `presentation` リポジトリへ岡田先生向けデッキを書いたが、終了の手順が cwd の jaspehr しか見ず、デッキは未追跡のまま残った。次のコマンドで、当セッションが触れた全リポジトリの未コミット・未 push を洗い出す（出力が空でなければ、すべて片付けてから終える）
+
+  ```bash
+  TX=$(ls -t ~/.claude/projects/"$( (pwd -W 2>/dev/null || pwd) | sed 's#[^A-Za-z0-9]#-#g')"/*.jsonl 2>/dev/null | head -1)
+  { pwd; jq -r 'select(.type=="assistant").message.content[]?|select(.type=="tool_use" and (.name=="Write" or .name=="Edit"))|.input.file_path' "$TX"; } | sort -u | while read -r f; do
+    d=$(dirname "$f"); while [ ! -d "$d" ] && [ "$d" != / ]; do d=$(dirname "$d"); done
+    git -C "$d" rev-parse --show-toplevel 2>/dev/null
+  done | sort -u | while read -r r; do
+    git -C "$r" fetch -q 2>/dev/null
+    echo "== $r"; git -C "$r" status -sb | grep -E '^(\?\?| M|M |A |D |##.*(ahead|behind))'
+  done
+  ```
+- **終了を宣言した後に作業が続いたら、続けた分も終了の手順を最初からやり直す。** 一度「終了」を実行した同じセッションを resume して作業を足した場合、前回の終了は続きの分を覆わない（上の岡田デッキは、11/9 に終了した会話を 11/11 に再開して作った）。再開したセッションの最後には、改めて Step 5 までを実行する
 - コミットメッセージは変更内容を端的に示す（例: `Add taro sprouting plan and 2026-05-09 work log`）
 
 ## Step 6: ユーザーへの操作依頼
