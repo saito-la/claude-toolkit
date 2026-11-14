@@ -20,7 +20,7 @@ body { display:grid; height:100vh; height:100dvh; gap:10px 16px;
 #body { grid-area:body; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
 nav { grid-area:nav; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 @media (orientation: landscape) {
-  body { grid-template-columns:210px 1fr; grid-template-rows:1fr auto; grid-template-areas:"side body" "nav body"; }
+  body { grid-template-columns:250px 1fr; grid-template-rows:1fr auto; grid-template-areas:"side body" "nav body"; }
 }
 /* 全画面のとき、ブラウザが左上に出す「✕」を避ける */
 body.fs #side { padding-top:52px; }
@@ -32,16 +32,17 @@ body.fs #side { padding-top:52px; }
 .bar { height:6px; background:#2c2f34; border-radius:3px; margin:10px 0 8px; overflow:hidden; }
 #barfill { height:100%; width:0; background:var(--accent); }
 #barfill.warn { background:var(--warn); } #barfill.bad { background:var(--bad); }
-.kv { display:flex; justify-content:space-between; align-items:baseline; font-size:18px; color:var(--dim); line-height:1.6; font-variant-numeric:tabular-nums; }
-.kv b { color:var(--fg); font-weight:600; }
-#pace { display:inline-block; margin-top:6px; font-size:17px; font-weight:700; padding:3px 10px; border-radius:999px; background:#26292e; color:var(--dim); }
+.kv { display:flex; justify-content:space-between; align-items:baseline; font-size:24px; color:var(--dim); line-height:1.6; font-variant-numeric:tabular-nums; }
+.kv b { color:var(--fg); font-weight:700; }
+#pace { display:inline-block; margin-top:8px; font-size:20px; font-weight:700; padding:3px 10px; border-radius:999px; background:#26292e; color:var(--dim); }
 #pace:empty { display:none; }
 #pace.ahead { color:#0d1f0d; background:var(--ok); } #pace.behind { color:#2a0b0b; background:var(--bad); }
 
 /* スライド */
 .slide { padding:2px 2px 0; }
-#count { font-size:16px; color:var(--dim); font-variant-numeric:tabular-nums; }
-#ttl { font-size:21px; font-weight:700; line-height:1.35; margin-top:2px; }
+#count { font-size:24px; color:var(--dim); font-variant-numeric:tabular-nums; }
+#count b { font-size:30px; color:var(--fg); font-weight:700; }
+#ttl { font-size:23px; font-weight:700; line-height:1.35; margin-top:4px; }
 
 /* 原稿 */
 #body p { margin:0 0 .4em; line-height:1.5; }
@@ -102,7 +103,7 @@ function fit() {
 function show() {
   i = Math.max(0, Math.min(S.length - 1, i)); store.set('i', i);
   const s = S[i];
-  $('count').textContent = s.n + ' / ' + S.length;
+  $('count').innerHTML = '<b>#' + s.n + '</b>/全' + S.length + '枚';
   $('ttl').textContent = s.title;
   $('body').innerHTML = '';
   s.text.split(/\n\s*\n/).forEach(p => { const e = document.createElement('p'); e.textContent = p.trim(); $('body').append(e); });
