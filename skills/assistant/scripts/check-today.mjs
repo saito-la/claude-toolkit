@@ -205,7 +205,11 @@ try {
   let sec = '';
   lines.forEach((text) => { const h = text.match(/^## (.+)$/); if (h) { sec = h[1].trim(); secs.push(sec); } });
   const heads = items.filter((x) => x.section === 'やること');
-  const minutesOf = (t) => { const m = stripLinks(t).match(/約\s*(?:(\d+)\s*時間)?\s*(?:(\d+)\s*分)?/); return m && (m[1] || m[2]) ? Number(m[1] || 0) * 60 + Number(m[2] || 0) : null; };
+  // 見積は「約30分」「約1時間30分」と、2分で済む群の「（2分）」（docs/design.md「今日の順の付け方」）
+  const minutesOf = (t) => {
+    const m = stripLinks(t).match(/(?:約|[（(])\s*(?:(\d+)\s*時間\s*(?:(\d+)\s*分)?|(\d+)\s*分)/);
+    return m ? Number(m[1] || 0) * 60 + Number(m[2] || m[3] || 0) : null;
+  };
   // 見積を書く運用は features.workload の使い手だけ（使わない使い手の today.md は見積を持たない）
   const cap = INST.cfg.features.workload ? cand.capacity?.assignableMinutes : null;
   let sum = 0, forced = 0;
