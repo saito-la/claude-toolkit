@@ -21,7 +21,7 @@
  *      「やること N」への参照だけの行が無いか。「他人ボール」の節の各行も80文字以内・「未確認」等なし
  *   6. 台帳の未処理行が引く Gmail の受信のうち、受信トレイに残っていて使い手宛（To）に届いてその後同じスレッドで使い手が送っていないもの
  *      （candidates.json の ledgers.ballReturned）が、today.md のどこかで参照されているか。期限の無い行が
- *      「Gmail inbox」の節（台帳に行があるので外す）と「やること」（期限が無いので上がらない）の間に落ちるのを止める
+ *      受信トレイ（台帳に行があるので通としては書かない）からも「やること」（期限が無いので上がらない）からも落ちるのを止める
  * 送信がスレッドの外（別の件名・口頭）で行われた場合は拾えない。機械で通っても完了確認の代わりにはならない。
  * 問題があれば終了コード1を返す。
  */
@@ -53,7 +53,7 @@ const flag = (it, msg) => problems.push(`  ${it.line}行（${it.section}）: ${m
 // 1. 出所
 const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // ファイルのメール（設定の mailFiles。Outlook の画面から書き出したもの）の各通の link も出所に数える。
-// 2026-11-12、005 の init で、design.md「Gmail inbox の節」どおり Outlook の通に link だけを添えた項目が「出所が無い」で止まった
+// 2026-11-12、005 の init で、当時の design.md「Gmail inbox の節」どおり Outlook の通に link だけを添えた項目が「出所が無い」で止まった
 const SOURCE = new RegExp(`pj:\\/\\/open|‹[^›]+›|action-items\\.md|\`[^\`]+\\.md\`|#all\\/[0-9a-f]+|outlook\\.office(?:365)?\\.com\\/mail\\/|${esc(INST.cfg.workDoc.name)}|top-priority\\.md|\\d{1,2}:\\d{2}`);
 for (const it of items.filter((x) => x.section === 'やること')) {
   if (!SOURCE.test(it.text)) flag(it, `出所が無い。台帳のパスと行、メールのリンク、${INST.cfg.workDoc.name} のいずれかを添える`);

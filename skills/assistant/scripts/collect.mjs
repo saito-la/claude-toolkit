@@ -375,8 +375,7 @@ async function fetchGmailList(q, maxResults, label) {
   });
   return {
     found: true,
-    // Gmail 検索は総件数を返さない。resultSizeEstimate は maxResults 内の概算で、
-    // 滞留の実数を知るには docs/design.md「Gmail inbox の節」の区間クエリを別途使う
+    // Gmail 検索は総件数を返さない。resultSizeEstimate は maxResults 内の概算
     resultSizeEstimate: listData.resultSizeEstimate ?? null,
     messages: messages.filter(Boolean),
   };
@@ -540,8 +539,8 @@ function collectLedgers(today) {
   // 期日（kind が external）を持つ未完了の行だけを数える。目安（self）は過ぎても警報を出さない（docs/design.md「期限の扱い」）
   const rows = (pred) => ledgers.flatMap((l) => l.items.filter((it) => it.deadline && pred(it.deadline))
     .map(({ line, section, deadline, text }) => ({ path: l.path, line, section, deadline, text })));
-  // 期限を過ぎた未完了の行。today.md の「やること」の先頭に【期限超過】として出す。
-  // 過ぎたばかりのものほど取り返しが利くので、超過日数の短い順に並べる
+  // 期限を過ぎた未完了の行。today.md の「やること」に【期限超過】の札を付けて出す。位置は重要度で決める（docs/design.md「今日の順の付け方」）。
+  // 重要度が同じなら過ぎたばかりのものほど取り返しが利くので、超過日数の短い順に並べる
   const overdue = rows((d) => d.kind === 'external' && d.overdueDays > 0)
     .sort((a, b) => a.deadline.overdueDays - b.deadline.overdueDays);
   // 期限がこれから来る未完了の行。遠い期限も落とさず「直近の締切」「先の締切」に出す。期日の近い順
@@ -1184,7 +1183,7 @@ if (STDOUT) {
   console.log(`   業務量の上限: 約 ${Math.round(capacity.assignableMinutes / 6) / 10} 時間（${capacity.days} 日分。今日の残りの空き ${capacity.freeMinutes} 分＋1日 ${capacity.dayMinutes} 分×${capacity.days - 1}。今日の連続最大 ${capacity.longestMinutes} 分）。「やること」の見積の合計をこれに収める`);
   console.log(`   意識する案件: ${keepInMind.found ? `${keepInMind.items.length} 件（次の一手が無い ${keepInMind.items.filter((k) => k.ledgers.every((l) => !l.next)).length}・${KEEP_IDLE_DAYS}日以上止まっている ${keepInMind.items.filter((k) => k.ledgers.every((l) => l.idle)).length}）。「やること」の直下の節に優先順で出す` : 'なし'}`);
   console.log(`   台帳        : ${ledgers.length} ファイル / 未処理 ${openItems} 件（鮮度 ${LEDGER_DAYS} 日。過ぎていても期限・待ち・[!] のある ${ledgers.filter((l) => l.stale).length} ファイルは読み、${staleSkipped} ファイルを除外、走査 ${scanned}）`);
-  console.log(`   期限超過    : ${overdue.length} 件（${new Set(overdue.map((o) => o.path)).size} ファイル）${overdue.length ? '。ledgers.overdue を「やること」の先頭に【期限超過】として出す' : ''}`);
+  console.log(`   期限超過    : ${overdue.length} 件（${new Set(overdue.map((o) => o.path)).size} ファイル）${overdue.length ? '。ledgers.overdue を「やること」に【期限超過】の札を付けて出す（先頭に積まない）' : ''}`);
   console.log(`   先の期限    : ${dueSoon.length} 件（${new Set(dueSoon.map((o) => o.path)).size} ファイル）。ledgers.upcoming を「直近の締切」「先の締切」に漏れなく出す`);
   console.log(`   返していない受信: ${ballReturned.checked ? `台帳の行 ${ballReturned.items.length} 件（台帳が引く Gmail の ID ${ballReturned.ids} 件のうち）。ledgers.ballReturned を today.md のどこかに載せる` : '未照会'}`);
   console.log(`   目安        : ${aims.length} 件（自分で決めた日付。期限として扱わず、ledgers.aims を優先順位の材料にだけ使う）`);
