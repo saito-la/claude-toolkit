@@ -54,6 +54,10 @@ export const insertTask = (token, listId, { title, notes, due }) =>
 export const completeTask = (token, listId, id) =>
   call(token, 'PATCH', `/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(id)}`, { status: 'completed' });
 
+// 完了を取り消す。completed を消さないと未完了に戻らない
+export const reopenTask = (token, listId, id) =>
+  call(token, 'PATCH', `/lists/${encodeURIComponent(listId)}/tasks/${encodeURIComponent(id)}`, { status: 'needsAction', completed: null });
+
 /** タスクの期日（YYYY-MM-DD）。Tasks の due は日付だけが意味を持つ */
 export const dueOf = (task) => (task.due ? task.due.slice(0, 10) : null);
 export const keyOf = (task) => (task.notes || '').split('\n').find((l) => l.startsWith(KEY_PREFIX))?.slice(KEY_PREFIX.length) ?? null;

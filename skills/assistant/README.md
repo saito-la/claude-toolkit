@@ -61,7 +61,7 @@
 - `close-items.mjs`：済んだ台帳の行を閉じて退避し、commit・push する
 - `linkify-today.mjs`・`dispatch.mjs`：pj リンクと作業の振り分け（`features.pjLinks`）
 - `doc-2w.mjs`：予定表の2週間分を作業用の文書へ転記する。締切のタスクは各日の先頭に入れる
-- `deadline-tasks.mjs`：today.md の締切の節を Google Tasks のタスクにする（`deadlineTasks`）
+- `deadline-tasks.mjs`：today.md に載った外部の期日（締切の節と「やること」）を Google Tasks のタスクにする（`deadlineTasks`）
 - `doc-log.mjs`：作業用の文書の前日分を記録用の文書へ移す
 - `doc-done.mjs`：やったことを作業用の文書へ書く（`features.done`）
 - `doc-remove.mjs`・`doc-migrate.mjs`：作業用の文書の行を台帳へ移し、文書から消す
