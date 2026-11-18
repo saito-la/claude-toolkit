@@ -1,9 +1,9 @@
 # hooks
 
 作成日：2026-09-28
-改訂日：2026-11-13
+改訂日：2026-11-18
 
-Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査、応答の言語の検査と、これらの検査を Codex CLI でも効かせる仲介を収める。
+Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。Google Chat への完了通知、Markdown 見出しの規約検査、相手に届く送信の検査、削除の検査、応答の言語の検査、AI 用 Chrome の残りタブの検査と、これらの検査を Codex CLI でも効かせる仲介を収める。
 
 ## 配置と登録
 
@@ -20,6 +20,7 @@ Claude Code のフックとして `~/.claude/hooks/` に置くスクリプト。
 - 送信の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「相手に届く送信の検査」）
 - 削除の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「削除の検査」）
 - 応答の言語の検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「応答の言語の検査」）
+- 残りタブの検査：`install.py` は登録しない。ユーザーの `settings.json` に自分で足す（下の「AI 用 Chrome の残りタブの検査」）
 - Codex CLI での検査：`install.py` は登録しない。`/etc/codex/hooks.json` に管理者権限で置く（下の「Codex CLI での検査」）
 
 ## Google Chat への完了通知
@@ -290,5 +291,40 @@ osascript -e 'do shell script "install -d -m 755 /etc/codex && install -m 644 '"
 ```json
 "Stop": [
   { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/uncommitted-repos-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+]
+```
+
+## AI 用 Chrome の残りタブの検査
+
+`browser-tab-check.py` は `instructions/tools.md`「ブラウザのタブの後始末」を機械で支える。SessionStart と Stop で呼ぶ。
+
+### 仕組み
+
+- 対象のブラウザは、起動中のプロセスの引数から引く。`--remote-debugging-port=<N>` を持ち、`--user-data-dir` に `claude-chrome` を含む Chrome。ポートとプロファイルの一覧はスクリプトに持たない（含める語は環境変数 `CLAUDE_CHROME_DIR_MATCH` で変えられる）
+- SessionStart で、その時点のタブの targetId をセッションごとに一時ファイルへ記録する（基準）。Stop で、基準に無いタブ（開始後に現れたタブ）を数える
+- そのセッションが AI 用 Chrome を使った形跡（記録に `claude-chrome`・`connectOverCDP`・`remote-debugging-port`・対象のポート）が無ければ何もしない。使っていないセッションに他人のタブを言わないため
+- 残りがあれば decision "block" で、タブの一覧と後始末の決まりを Claude に返す。同じタブの組には1回しか言わない
+- 自動では閉じない。「どのセッションが開いたタブか」はフックから確定できず、人に見せるために開いたタブやほかのセッションのタブを巻き込むため。閉じるかどうかは Claude が決める
+
+### 経緯
+
+2026-11-18、AI 用 Chrome が出しっぱなしになっていた（UTokyo 側に2枚、Private 側に1枚。どれも CDP に接続中のプロセスが無かった）。tools.md の決まりは 11/14 から入っていたが、その後のセッションが守っていなかったため、文章に加えて機械の歯止めを入れた。
+
+### 限界
+
+- 基準は SessionStart の時点なので、同時に動いているほかのセッションが開いたタブも「開始後に現れたタブ」に入る。一覧を見て自分のものだけ閉じる前提
+- タブが0枚のまま Chrome が残る状態（macOS で全ウィンドウを閉じた後）は検出しない
+- 登録より前から開いているセッションには基準が無く、全タブが対象になる
+
+### 登録
+
+全プロジェクトに効かせるため、ユーザーの `~/.claude/settings.json` に足す。
+
+```json
+"SessionStart": [
+  { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+],
+"Stop": [
+  { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
 ]
 ```
