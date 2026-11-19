@@ -20,6 +20,7 @@
  *      （ledgers.ballReturned。docs/design.md「1件ずつの完了確認」）
  *  10. 勤務先への連絡（設定の attendanceNotices。判定の正本は notices.mjs）：決まった曜日に勤務先へ行けない日と、
  *      その連絡が送信済みのメールかインスタンスの attendance-notices.csv にあるか
+ *  12. 会議の資料の要約（設定の meetingBriefs）：置き場にある、当日の日付で始まる md（外の道具が作る。docs/design.md「出力」）
  *
  * Usage:
  *   node collect.mjs                    # 収集して data/candidates.json に書く
@@ -33,13 +34,13 @@
  * 切れた場合は scripts/auth-google.mjs で取り直す（README.md「資格情報」）。
  */
 
-import { readFileSync, writeFileSync, statSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, statSync, mkdirSync, existsSync, readdirSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { dirname, join, relative, sep } from 'path';
 import { classifyEventTitle } from './event-kind.mjs';
 import { conflictChecker, loadRules } from './conflicts.mjs';
 import { walkLedgers, collectWaiting, readLines, lastChanged } from './ledgers.mjs';
-import { instance, need, PROJECTS } from './lib/instance.mjs';
+import { instance, need, PROJECTS, expandHome } from './lib/instance.mjs';
 import { accessToken, getDoc, paragraphs } from './lib/google.mjs';
 import { fileEvents, isFileCalendar } from './lib/calendars.mjs';
 import { ymdOfDateHeading as ymdOfHeading } from './lib/date-heading.mjs';
@@ -1075,6 +1076,37 @@ const keepInMind = collectKeepInMind(today);
 if (!CALENDARS.length) warn('予定表の設定（calendars）が無いため、予定・空き時間・予定の重なりを出していません');
 if (!CFG.gmail) warn('Gmail の設定（gmail）が無いため、inbox・送信済み・返事待ちの返事を見ていません');
 
+/**
+ * 会議の資料の要約（設定の meetingBriefs。置き場の並びで、`*` を含んでよい）のうち、ファイル名が当日の日付
+ * （YYYYMMDD-）で始まる md。題名は1行目の見出し。会議の行との対応は today.md を書く側が題名で付ける
+ */
+function collectMeetingBriefs(ymd) {
+  const key = ymd.replace(/-/g, '');
+  const expand = (pattern) => {
+    let dirs = [pattern.startsWith('/') ? '/' : '.'];
+    for (const seg of pattern.split('/').filter(Boolean)) {
+      if (!seg.includes('*')) { dirs = dirs.map((d) => join(d, seg)); continue; }
+      const re = new RegExp(`^${seg.split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
+      dirs = dirs.flatMap((d) => {
+        try { return readdirSync(d, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith('.') && re.test(e.name)).map((e) => join(d, e.name)); } catch { return []; }
+      });
+    }
+    return dirs.filter((d) => existsSync(d));
+  };
+  const out = [];
+  for (const pattern of CFG.meetingBriefs) {
+    for (const dir of expand(expandHome(pattern))) {
+      for (const f of readdirSync(dir)) {
+        if (!f.startsWith(`${key}-`) || !f.endsWith('.md')) continue;
+        const path = join(dir, f);
+        const title = (readFileSync(path, 'utf8').match(/^# (.+)$/m) || [])[1] || f;
+        out.push({ title, path, link: relPath(INST.dir, path) });
+      }
+    }
+  }
+  return out;
+}
+
 const [dayEvents, upcomingRaw, conflicts, gmail, sent, waiting, attendanceNotices, ballReturned] = await Promise.all([
   fromCalendars(today),
   fromCalendars(addDays(today, 1), UPCOMING_DAYS),
@@ -1161,6 +1193,7 @@ const result = {
   },
   capacity,
   calendar: { events, timed, gaps, upcomingDays: UPCOMING_DAYS, upcoming, conflicts },
+  meetingBriefs: collectMeetingBriefs(today),
   attendanceNotices,
 };
 

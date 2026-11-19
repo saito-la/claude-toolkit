@@ -149,6 +149,7 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 - `holidays`：祝日を読む予定表。`calendarId`（既定 Google の「日本の祝日」）、`credential`（既定 `calendars` の最初の Google の予定表のもの）。いまは `attendanceNotices` だけが使う
 - `capacity`：「やること」に載せる量の上限。`dayMinutes`（既定 1080＝18時間。睡眠以外で1日に使える時間）、`days`（既定 2。何日分を載せるか）。`docs/design.md`「業務量」
 - `deadlineTasks`：外部の期日を載せる Google Tasks。`credential`（既定 なし＝使わない。スコープ `https://www.googleapis.com/auth/tasks`）、`list`（既定 `締切`。無ければ作る）。タスクは持ち主にしか見えず、共有・公開した予定表に出ない
+- `meetingBriefs`（既定 空）：会議の資料の要約の置き場の並び。`~/` で始めてよく、フォルダの名前に `*` を含めてよい（例 `~/work/*/meeting-briefs`）。ファイル名が当日の日付（`YYYYMMDD-`）で始まる md を `candidates.json` の `meetingBriefs` に渡し、today.md の「今日の予定」の会議の行からリンクする（`docs/design.md`「出力」）。要約を作るのはエンジンの外の道具
 - `prepPattern`（既定 `講義|講演|レクチャー|発表|セミナー|座長|演者|lecture`）：話す側に立つかもしれない予定の題名の目印。当たった予定は候補で、話す役かは案内の本文で確かめる（`docs/design.md`「1件ずつの完了確認」）
 - `credentialDir`（既定 `~/.config/gdrive-mcp`）：資格情報のフォルダ。`oauthClient`（既定 `credentials.json`）：OAuth のクライアント
 - `archiveScript`（既定 `~/.claude/scripts/archive-action-items.py`）：閉じた行を退避する道具

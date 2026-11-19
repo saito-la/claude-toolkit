@@ -49,6 +49,7 @@ export const DEFAULTS = {
   deadlineTasks: { credential: null, list: '締切' }, // 外部の期日を載せる Google Tasks。credential が無ければ使わない
   capacity: { dayMinutes: 1080, days: 2 }, // 「やること」の量の上限＝今日の残りの空き（dayMinutes まで）＋dayMinutes×(days-1)（docs/design.md「業務量」）
   prepPattern: '講義|講演|レクチャー|発表|セミナー|座長|演者|lecture',
+  meetingBriefs: [], // 会議の資料の要約の置き場（`*` を含んでよい）。当日の日付で始まる md を集める（collect.mjs）
   archiveScript: '~/.claude/scripts/archive-action-items.py',
 };
 
