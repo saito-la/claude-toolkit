@@ -5,7 +5,7 @@
  *   node <エンジン>/scripts/check-today.mjs [today.md] [--fix]   # インスタンスのフォルダで実行する
  *
  * 手順の正本は ../docs/design.md「1件ずつの完了確認」。ここはその機械で拾える部分だけを受け持つ。
- *   1. 「やること」の各項目に出所（台帳のパスと行、Gmail・Outlook のメールのリンク、作業用の文書、時刻、top-priority.md）があるか。
+ *   1. 「やること」「2分で済むこと」の各項目に出所（台帳のパスと行、Gmail・Outlook のメールのリンク、作業用の文書、時刻、top-priority.md）があるか。
  *      出所の無い項目は、済んだかどうかを誰も確かめられない
  *   2. 「`<台帳>` N行」の参照先が、今も未処理の行（`- [ ]`・`- [!]`）か。閉じた・消えた・ずれた行を拾う
  *   3. Gmail のリンクを付けた項目について、リンク先より後に同じスレッドで使い手が送った通（👍 などのリアクションと
@@ -14,9 +14,9 @@
  *   4. 台帳の未処理行のうち期限がこれから来るもの（candidates.json の ledgers.upcoming）が、today.md のどこかで
  *      参照されているか。遠い期限も落とさない（docs/design.md「期限の扱い」。2026-10-24 決定）。
  *      自分で決めた日付（目安、kind が self。ledgers.aims）は点検しない（2026-11-08 方針）
- *   6. 業務量：「やること」の見積の合計が上限（candidates.json の capacity）に収まるか
- *   7. 意識しておく案件：節が「やること」の直下にあり、keep-in-mind.md の全案件が載っているか
- *   5. 今日の一覧の書き方（../docs/design.md「今日の一覧の書き方」）：1 action（「やること」の項目の下の行、
+ *   6. 業務量：「やること」「2分で済むこと」の見積の合計が上限（candidates.json の capacity）に収まるか
+ *   7. 意識しておく案件：節が「やること」（「2分で済むこと」があればその節）の直下にあり、keep-in-mind.md の全案件が載っているか
+ *   5. 今日の一覧の書き方（../docs/design.md「今日の一覧の書き方」）：1 action（「やること」「2分で済むこと」の項目の下の行、
  *      「直近の締切」「先の締切」の各行）が80文字以内（リンクを除く）か、「未確認」「送信済み」の類の語が無いか、
  *      「やること N」への参照だけの行が無いか。「他人ボール」の節の各行も80文字以内・「未確認」等なし
  *   6. 台帳の未処理行が引く Gmail の受信のうち、受信トレイに残っていて使い手宛（To）に届いてその後同じスレッドで使い手が送っていないもの
@@ -26,7 +26,7 @@
  * 問題があれば終了コード1を返す。
  */
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { refsOf } from './today-refs.mjs';
+import { refsOf, TODO_SECTIONS, QUICK } from './today-refs.mjs';
 import { instance, PROJECTS } from './lib/instance.mjs';
 import { accessToken as tokenOf } from './lib/google.mjs';
 import { header, myAddresses, kindOf } from './lib/gmail-kind.mjs';
@@ -55,7 +55,7 @@ const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // ファイルのメール（設定の mailFiles。Outlook の画面から書き出したもの）の各通の link も出所に数える。
 // 2026-11-12、005 の init で、当時の design.md「Gmail inbox の節」どおり Outlook の通に link だけを添えた項目が「出所が無い」で止まった
 const SOURCE = new RegExp(`pj:\\/\\/open|‹[^›]+›|action-items\\.md|\`[^\`]+\\.md\`|#all\\/[0-9a-f]+|outlook\\.office(?:365)?\\.com\\/mail\\/|${esc(INST.cfg.workDoc.name)}|top-priority\\.md|\\d{1,2}:\\d{2}`);
-for (const it of items.filter((x) => x.section === 'やること')) {
+for (const it of items.filter((x) => TODO_SECTIONS.includes(x.section))) {
   if (!SOURCE.test(it.text)) flag(it, `出所が無い。台帳のパスと行、メールのリンク、${INST.cfg.workDoc.name} のいずれかを添える`);
 }
 
@@ -69,7 +69,7 @@ const stripLinks = (t) => t.replace(/\[([^\]]*)\]\([^)]*\)/g, '').replace(/https
     if (h) { sec = h[1].trim(); return; }
     const top = /^(\d+\.|-) /.test(text);
     const sub = /^\s+(-|\d+\.) /.test(text);
-    const isAction = (sec === 'やること' && sub) || ((sec === '直近の締切' || sec === '先の締切' || sec === '他人ボール') && (top || sub));
+    const isAction = (TODO_SECTIONS.includes(sec) && sub) || ((sec === '直近の締切' || sec === '先の締切' || sec === '他人ボール') && (top || sub));
     if (!isAction) return;
     const it = { line: i + 1, section: sec };
     const body = stripLinks(text.replace(/^\s*(-|\d+\.)\s+/, ''));
@@ -204,7 +204,7 @@ try {
   const secs = [];
   let sec = '';
   lines.forEach((text) => { const h = text.match(/^## (.+)$/); if (h) { sec = h[1].trim(); secs.push(sec); } });
-  const heads = items.filter((x) => x.section === 'やること');
+  const heads = items.filter((x) => TODO_SECTIONS.includes(x.section));
   // 見積は「約30分」「約1時間30分」と、2分で済む群の「（2分）」（docs/design.md「今日の順の付け方」）
   const minutesOf = (t) => {
     const m = stripLinks(t).match(/(?:約|[（(])\s*(?:(\d+)\s*時間\s*(?:(\d+)\s*分)?|(\d+)\s*分)/);
@@ -220,16 +220,17 @@ try {
     if (/【期限超過】|【最優先】/.test(it.text)) forced += m;
   }
   if (cap != null && sum > cap) {
-    const msg = `  「やること」の見積の合計 ${sum} 分が上限 ${cap} 分（${cand.capacity.days} 日分）を超えている`;
+    const msg = `  「やること」「2分で済むこと」の見積の合計 ${sum} 分が上限 ${cap} 分（${cand.capacity.days} 日分）を超えている`;
     if (forced >= cap) console.log(`ℹ${msg}（【期限超過】【最優先】だけで ${forced} 分。外す相談・期日の交渉を「やること」に入れる）`);
     else problems.push(`${msg}。優先度の低い項目を外す（外した項目は台帳に残る）`);
   }
   const keep = cand.keepInMind;
   if (keep?.found && keep.items.length) {
     const i = secs.indexOf('意識しておく案件');
-    if (i === -1) problems.push('  「意識しておく案件」の節が無い（keep-in-mind.md の案件を「やること」の直下に優先順で出す）');
+    if (i === -1) problems.push('  「意識しておく案件」の節が無い（keep-in-mind.md の案件を「やること」「2分で済むこと」の直下に優先順で出す）');
     else {
-      if (secs[i - 1] !== 'やること') problems.push('  「意識しておく案件」の節を「やること」の直下に置く');
+      const above = secs.includes(QUICK) ? QUICK : 'やること';
+      if (secs[i - 1] !== above) problems.push(`  「意識しておく案件」の節を「${above}」の直下に置く`);
       const body = items.filter((x) => x.section === '意識しておく案件').map((x) => x.text).join('\n');
       for (const k of keep.items) if (!body.includes(k.title)) problems.push(`  意識しておく案件「${k.title}」が節に無い`);
     }

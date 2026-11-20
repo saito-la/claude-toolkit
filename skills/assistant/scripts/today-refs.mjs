@@ -13,6 +13,11 @@ import { PROJECTS } from './lib/instance.mjs';
 
 export { PROJECTS };
 
+// 「やること」と、その直後に置く「2分で済むこと」（../docs/design.md「今日の順の付け方」）。番号は「やること」から通しで振るので、
+// 項目を数える・番号で引く処理は両方の節を同じに扱う
+export const QUICK = '2分で済むこと';
+export const TODO_SECTIONS = ['やること', QUICK];
+
 const expand = (list) => list.split(/[・、,]/).flatMap((part) => {
   const [a, b] = part.trim().split(/[〜-]/).map(Number);
   return Number.isFinite(a) ? Array.from({ length: (b || a) - a + 1 }, (_, i) => a + i) : [];

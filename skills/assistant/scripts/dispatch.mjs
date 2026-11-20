@@ -6,7 +6,7 @@
  *   node <エンジン>/scripts/dispatch.mjs --project work/project-a [--dry-run] < 依頼文
  * インスタンスのフォルダで実行する。設定の features.pjLinks が true のときだけ動く。
  *
- * --item N は today.md の「やること」の N 番を使う。項目の pj リンク（linkify-today.mjs が作る）から
+ * --item N は today.md の「やること」「2分で済むこと」の N 番を使う（番号は両節で通し）。項目の pj リンク（linkify-today.mjs が作る）から
  * プロジェクトと依頼文を取る。リンクが複数あれば最初のものを使い、--pick で選び直せる。
  * リンクの無い項目（メールだけが出所の項目）は --project が要り、依頼文は項目の本文から組み立てる。
  * 標準入力は必須で、「理由」の節（なぜこの依頼を出すことになったか）を含める。無ければ開かずに止まる。
@@ -22,6 +22,7 @@ import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { instance, requireFeature, need, expandHome } from './lib/instance.mjs';
+import { TODO_SECTIONS } from './today-refs.mjs';
 
 const INST = instance();
 requireFeature('pjLinks', '作業の振り分け');
@@ -59,12 +60,13 @@ if (ITEM) {
   const day = (lines[0] || '').replace(/^#\s*/, '').trim();
   let section = '';
   let line = null;
+  let found = '';
   for (const text of lines) {
     const h = text.match(/^## (.+)$/);
     if (h) { section = h[1].trim(); continue; }
-    if (section === 'やること' && text.startsWith(`${ITEM}. `)) { line = text; break; }
+    if (TODO_SECTIONS.includes(section) && text.startsWith(`${ITEM}. `)) { line = text; found = section; break; }
   }
-  if (!line) { console.error(`today.md の「やること」に ${ITEM} 番が無い`); process.exit(1); }
+  if (!line) { console.error(`today.md の「${TODO_SECTIONS.join('」「')}」に ${ITEM} 番が無い`); process.exit(1); }
 
   const links = [...line.matchAll(/\[([^\]]+)\]\((pj:\/\/open\?[^)]+)\)/g)].map(([, label, url]) => {
     const q = new URL(url).searchParams;
@@ -85,7 +87,7 @@ if (ITEM) {
       .replace(/\[([^\]]+)\]\((pj:\/\/[^)]+)\)/g, '')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '$1（$2）')
       .trim();
-    prompt = `${NAME} の today.md（${day}）の「やること」${ITEM} から。次の項目を進めてください：${body}`;
+    prompt = `${NAME} の today.md（${day}）の「${found}」${ITEM} から。次の項目を進めてください：${body}`;
   }
   prompt += `\n\n${stdinText}`;
 } else {

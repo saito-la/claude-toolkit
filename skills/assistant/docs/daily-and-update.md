@@ -85,7 +85,7 @@ init では、載せる候補のすべて（印に関わらず）を、プロジ
    - 材料：`evidence.mjs`（2.3）と `data/candidates.json`。セッションの途中なら先に `collect.mjs` を流し直す
    - すべての候補を Sonnet のサブエージェントで確かめる（2.4）。確かめ方は `design.md`「1件ずつの完了確認」「期限の扱い」。インスタンスの `overview.md` にある使い手固有の決まりも当てる
    - 済んだ行は `close-items.mjs --apply` で閉じる
-   - 「やること」は `candidates.json` の `capacity` に収まる量だけにし、各項目に見積を書く（`design.md`「業務量」）。インスタンスに `keep-in-mind.md` があれば、その直下に「意識しておく案件」を優先順で置く（`design.md`「意識しておく案件」）
+   - 「やること」は `candidates.json` の `capacity` に収まる量だけにし、各項目に見積を書く（`design.md`「業務量」）。2分で済む項目は直後の節「2分で済むこと」に通し番号で置く（`design.md`「今日の順の付け方」）。インスタンスに `keep-in-mind.md` があれば、その直下に「意識しておく案件」を優先順で置く（`design.md`「意識しておく案件」）
    - `attendanceNotices` に連絡が済んでいない日があれば「やること」に出す（`design.md`「勤務先への連絡」）
    - 書き方は `design.md`「出力」の印 → linkify（`features.pjLinks`）→ 点検（`check-today.mjs`、`features.checkNames` なら `check-names.mjs` も）
    - 通ったら、today.md を git に入れるインスタンスでは today.md だけを commit・push する

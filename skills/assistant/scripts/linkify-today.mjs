@@ -14,7 +14,7 @@
  */
 import { readFileSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { refsOf, projectOf, PROJECTS } from './today-refs.mjs';
+import { refsOf, projectOf, PROJECTS, QUICK } from './today-refs.mjs';
 import { instance, requireFeature, need, expandHome } from './lib/instance.mjs';
 
 const INST = instance();
@@ -29,6 +29,7 @@ const slots = [];  // { li, project } … 置き換える場所
 // 節ごとの依頼の言い方
 const ASK = {
   'やること': '次の項目を進めてください',
+  [QUICK]: '2分で済む次の項目を進めてください',
   '直近の締切': '期日までに次の行動を済ませたいので、進めてください',
   '台帳の不整合': '次の台帳の不整合を直してください',
   '他人ボール': '次の件は相手の返事を待っています。督促・フォローが要るか確かめ、要れば進めてください',

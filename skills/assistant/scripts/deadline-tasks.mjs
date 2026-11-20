@@ -13,7 +13,7 @@
  *
  * 足すもの：
  *   - 「直近の締切」「先の締切」の行
- *   - 「やること」の項目のうち、参照する台帳の行に外部の期日があるもの（data/candidates.json の ledgers.upcoming）。
+ *   - 「やること」「2分で済むこと」の項目のうち、参照する台帳の行に外部の期日があるもの（data/candidates.json の ledgers.upcoming）。
  *     締切の節は「やること」と重なる行を載せないので、優先度が上がって「やること」へ移った期日もここで拾う
  *   - 同じ期日・同じ台帳の行のタスクが既にあれば足さない（完了済みも含む。使い手が予定表で完了にしたものを戻さない）
  * 完了にするもの：
@@ -30,7 +30,7 @@
  */
 import { readFileSync, existsSync } from 'fs';
 import { instance } from './lib/instance.mjs';
-import { refsOf } from './today-refs.mjs';
+import { refsOf, TODO_SECTIONS } from './today-refs.mjs';
 import { tasksToken, findList, listTasks, insertTask, completeTask, reopenTask, dueOf, keyOf, KEY_PREFIX } from './lib/tasks.mjs';
 
 const INST = instance();
@@ -38,7 +38,6 @@ const CFG = INST.cfg.deadlineTasks;
 const APPLY = process.argv.includes('--apply');
 const REOPEN = process.argv.includes('--reopen');
 const SECTIONS = ['直近の締切', '先の締切'];
-const TODO = 'やること';
 
 if (!CFG?.credential) {
   console.log('deadlineTasks.credential が無いので、締切をタスクに載せない（README.md「3. 設定」）');
@@ -99,7 +98,7 @@ for (const line of text.split('\n')) {
     if (!due) continue;
     const key = `${r.path}@${due}`;
     liveKeys.add(key);
-    if (section === TODO && due >= today) add({ due, title: titleOfTodo(line), key, ref: r });
+    if (TODO_SECTIONS.includes(section) && due >= today) add({ due, title: titleOfTodo(line), key, ref: r });
   }
   if (!SECTIONS.includes(section)) continue;
   // 「- 11/12（木）正午 — 〇〇を出す [台帳](pj://…)」
