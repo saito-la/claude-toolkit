@@ -71,7 +71,8 @@ def tokenize(s):
 
 def ascii_word_subset(a_norm, b_norm):
     """両者がASCIIのみで構成される場合、トークン集合が双方向で部分集合関係にあるかを返す。
-    どちらかがCJKを含む場合はNone（呼び出し側は従来の部分文字列一致にフォールバック）。
+    a だけが ASCII で b が日本語を含む場合は、a の語がすべて b の ASCII の語にあるかを返す。
+    a が日本語を含む場合はNone（呼び出し側は従来の部分文字列一致にフォールバック）。
 
     tier2のpath/leaf一致は元々「短いクエリがパスに含まれる／長い文にパス全体が含まれる」を
     双方向の生文字列部分一致（`in`）で判定していたが、これだと短いASCIIのleaf名
@@ -81,6 +82,14 @@ def ascii_word_subset(a_norm, b_norm):
     tier1のexact-alias判定（ASCII別名はトークン集合の完全一致）と同じ考え方を、
     tier2にも双方向で適用する。
     """
+    if a_norm.isascii() and not b_norm.isascii():
+        # パス・リーフ名は ASCII で、依頼の文が日本語を含むとき。日本語の文はパスに含まれ得ない
+        # ので、向きは「パスの語がすべて文の ASCII の語にある」の一方だけ。部分文字列一致に
+        # 戻すと、"core-hospitalを…" が leaf "it"（hosp-it-al）を、"presentation の…" が
+        # leaf "ta" を、"mealprepの…" が leaf "pr" を拾って候補が割れる（2026-11-22 実例。
+        # 日本語を含む依頼が最も多いのに DIRECT にならなかった）
+        a_tok = tokenize(a_norm)
+        return bool(a_tok) and a_tok <= {t for t in tokenize(b_norm) if t.isascii()}
     if not (a_norm.isascii() and b_norm.isascii()):
         return None
     a_tok, b_tok = tokenize(a_norm), tokenize(b_norm)
