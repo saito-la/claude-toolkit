@@ -1,7 +1,7 @@
 # Orca
 
 作成日：2026-11-04
-改訂日：2026-11-10
+改訂日：2026-11-22
 
 ## 1. Orca の性質
 
@@ -76,4 +76,5 @@ pj の索引（`~/Projects` の下で `CLAUDE.md` を持つフォルダ）を gi
 
 - 初めて使うときは、左の一覧の上の「＋」（New workspace／新規ワークスペース）を押し、リポジトリに planner を選んで作業場を作り、そこで claude を起動する。planner の入手と渡し方は saito-la/assistant が決めており、ここには書かない
 - 作業を始めるときは pj（「〇〇のプロジェクトを開いて」、`/pj`）を使う。Orca が動いていれば Orca の作業場で claude が起動し、動いていなければ iTerm2（Windows では Windows Terminal）で開く
+- 全プロジェクトのセッションを取り仕切る秘書の bot（Orca Bots）を作り、iPhone・iPad から話しかけるときは [bots.md](bots.md)
 - 作業を終えるときは、作業場の中のセッションで「セッションを終わります」と言う。セッション終了の手順が `skills/pj/scripts/wt-finish.sh` を呼び、作業場の成果を既定ブランチへ統合して push し、作業場とブランチを片付ける
