@@ -5,7 +5,7 @@
 
 ## 1. 目的
 
-Orca の bot 機能（Orca Bots）で、全プロジェクトのセッションを立ち上げ、指揮し、進み具合を知らせる秘書の bot を1つ作り、Mac と iPhone・iPad から話しかけられるようにする。bot は専用の AI を持たず、置いた Mac に入っている Claude Code（または Codex）で動き、費用はそのサブスクに乗る。仕組みは公式の [Bots](https://orca.dev/docs/bots)・[Security](https://orca.dev/docs/bots/security)・[Mobile](https://orca.dev/docs/mobile) にある。Orca そのものの入れ方と画面での設定は [README.md](README.md)。
+Orca の bot 機能（Orca Bots）で、全プロジェクトのセッションを立ち上げ、指揮し、進み具合を知らせる秘書の bot を1つ作り、Mac と iPhone・iPad から話しかけられるようにする。作業する端末が複数あり、端末どうしがつながらないときの置き方は9節。bot は専用の AI を持たず、置いた Mac に入っている Claude Code（または Codex）で動き、費用はそのサブスクに乗る。仕組みは公式の [Bots](https://orca.dev/docs/bots)・[Security](https://orca.dev/docs/bots/security)・[Mobile](https://orca.dev/docs/mobile) にある。Orca そのものの入れ方と画面での設定は [README.md](README.md)。
 
 ## 2. 前提
 
@@ -97,3 +97,18 @@ Orca はスマホ用の口（6768番）を、Mac がつないでいるすべて�
 - 許可の確認が出る操作と出ない操作（Approve for me が auto mode に当たるか）
 - bot から `orca` のコマンドと、手元の道具が呼べるか
 - iPhone・iPad から、携帯の回線で bot と話せるか
+
+## 9. 複数の端末で使う
+
+### 9.1. 端末ごとに置く場合
+
+bot が開き、見張れるのは、置いた機のセッションだけである。普段の作業が1台にまとまっていれば、bot はその1台に1つでよく、これがいちばん簡素である。作業する端末が複数あり、端末どうしが Remote Orca Server で届かない（Tailscale を入れられない網など、6.1）ときは、作業する端末ごとに bot を1つずつ置く。届く経路ができたら、常に動いている1台の bot にまとめる。
+
+### 9.2. 決まり
+
+- 名前は端末ごとに変える。iPhone・通知・セッションの記録の上で、どの端末の bot かが名前で分かるようにする
+- 役割はどの端末も同じ `bot-SOUL.md` にする。グローバルの指示も同じものを読むので、振る舞いは揃う
+- bot に覚えさせない（4節の Memory upkeep を止め、`MEMORY.md` に規則を書かない）。端末をまたいで要る情報は、リポジトリ・wiki・共有のストレージに置く。端末を離れる前に push し、次の端末では pull してから続ける
+- 「いま動いているのは」に答えるのは、各 bot の端末の分だけになる。全体は秘書の仕組みの台帳と today.md で見る
+- 1台でしか動かしてはいけない仕事（常駐の自動処理、二重に処理すると困るもの）は、決めた1台でだけ行う。どれがそうかは、持ち主の秘書の仕組みの設定と計画に従う
+- iPhone・iPad は、常に動いている1台とだけペアリングする。眠る端末とつなぐと、返事の来ない bot が並ぶ
