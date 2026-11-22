@@ -49,6 +49,8 @@ mv "$BOT/SOUL.md" "$BOT/SOUL.orig.md"
 ln -s "$TOOLKIT/tools/orca/bot-SOUL.md" "$BOT/SOUL.md"
 ```
 
+Windows は symlink の作成に権限が要るので、symlink ではなくコピーにし、claude-toolkit を取り直すたびにコピーし直す。Windows で bot が動くかは、2026-11 の時点で公式の文書に記述が無い。
+
 持ち主が誰か、何を大事にしているかは書かず、グローバルの指示（`~/.claude/CLAUDE.md`）に任せる。bot は Claude Code として動くのでそれを読む。効いているかは8節で確かめる。持ち主に固有の受け持ち（別の機に開く、など）が要るなら、`bot-SOUL.md` を写して直すのではなく、グローバルの指示の側に書く。
 
 ## 6. iPhone・iPad をつなぐ
@@ -59,6 +61,8 @@ Settings → Mobile の Connection は2つある。
 
 - Orca Relay：携帯の回線でも、どの Wi-Fi でも届く。Orca のアカウントへのサインインが要る
 - LAN：同じ Wi-Fi か Tailscale でしか届かない。アカウントは要らない
+
+Relay はスマホのアプリ用で、別の PC の Orca からはつながらない。別の PC から bot を置いた機を見るには Remote Orca Server（Settings → Remote Orca Servers、ベータ）を使い、こちらは LAN か Tailscale などの経路が要る（[公式](https://orca.dev/docs/remote-servers)）。
 
 移動中に使うなら Orca Relay にする。LAN でペアリングすると、スマホはそのときの Mac のアドレス1つにつなぐので、Mac のアドレスが変わると（テザリング、出先の Wi-Fi）届かなくなる。
 
