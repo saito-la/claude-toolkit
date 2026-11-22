@@ -128,3 +128,5 @@ action-items.md の最優先事項を実施して
 同じリポジトリで claude を2つ動かすと git のインデックスを共有し、片方の `git add` にもう片方の変更が混ざる。そのため新しい窓で開くときは、そのリポジトリの本体で claude が動いていなければ本体で、動いていれば `.claude/worktrees/<名前>/`（ブランチ `wt/<名前>`）に worktree を作って開く（`pj-worktree.sh`）。Orca は作業場ごとに worktree を作る。
 
 worktree で始めたセッションは、終えるときに `bash "$SKILL/scripts/wt-finish.sh"` で既定ブランチへ統合し、worktree とブランチを片付ける（未コミットがあれば止まる。`--dry-run` で先に見られる）。セッション終了の手順（`guides/SESSION-END.md`「worktree セッション」）がこれを呼ぶ。中身の無いまま残った `.claude/worktrees/` の worktree は、次に pj で開くときに回収される。
+
+統合するとworktreeのgit管理外のファイルは警告なく消える（`wt-finish.sh` は確かめない）。統合の前に `git status --ignored --short` で洗い、残す原本は本体側の同じパスへ移すか、取り直しの手順をコミット対象のREADMEに書いておく。
