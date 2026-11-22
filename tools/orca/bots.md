@@ -49,7 +49,7 @@ mv "$BOT/SOUL.md" "$BOT/SOUL.orig.md"
 ln -s "$TOOLKIT/tools/orca/bot-SOUL.md" "$BOT/SOUL.md"
 ```
 
-Windows は symlink の作成に権限が要るので、symlink ではなくコピーにし、claude-toolkit を取り直すたびにコピーし直す。Windows で bot が動くかは、2026-11 の時点で公式の文書に記述が無い。
+Windows は symlink の作成に権限が要るので、symlink ではなくコピーにし、claude-toolkit を取り直すたびにコピーし直す。bot 機能は Mac 限定ではない。公式の文書は OS に触れていないが、1.4.265 以降の各版に Windows 版（`orca-windows-setup.exe`）があり、ソース（2026-11-22 の `af76ca77`）の bot のコードは OS で機能を絞らず、Windows 向けの扱い（プロジェクトの結び付けを junction で張る、MCP サーバーの `.cmd` の起動など）を持つ。Mac にだけあるのは、眠りかけの間の動き方の扱いである。
 
 持ち主が誰か、何を大事にしているかは書かず、グローバルの指示（`~/.claude/CLAUDE.md`）に任せる。bot は Claude Code として動くのでそれを読む。効いているかは8節で確かめる。持ち主に固有の受け持ち（別の機に開く、など）が要るなら、`bot-SOUL.md` を写して直すのではなく、グローバルの指示の側に書く。
 
