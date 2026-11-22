@@ -38,13 +38,18 @@ bot を選び、設定の画面で次のようにする。
 
 ## 5. SOUL.md
 
-`SOUL.md` は bot の役割の正本。作った直後は、役割の1行と、Orca の既定の禁止（持ち主が許すまで、ここ以外への投稿や変更をしない）だけが入っている。次の3つの節を書く。
+`SOUL.md` は bot の役割を書くファイル。作った直後は、役割の1行と、Orca の既定の禁止（持ち主が許すまで、ここ以外への投稿や変更をしない）だけが入っている。
 
-- 受け持つこと：立ち上げ（行き先を決めてセッションを開き、依頼文を渡す）、再開（続きのセッションを開く）、指揮（開いた仕事の進み具合を `orca worktree ps`・`orca agent list`・`orca agent read` で見て、返事待ちや止まっているものを知らせる）、伝言（`orca terminal send` で動いているセッションへ届ける）、報告
-- しないこと：プロジェクトのファイルの編集・コミット・削除、メール・チャットの送信、記憶への規則の書き込み
-- 返事の形：短く（3行以内）、何をどこで開いたかを先に、迷ったら選択肢のカードで聞く、パスや ID は最後に
+持ち主に依らない秘書の役割（受け持つこと・しないこと・返事の形）は、このフォルダの [bot-SOUL.md](bot-SOUL.md) に書いてある。bot の `SOUL.md` をこれへの symlink に置き換えて使う。Orca が作った `SOUL.md` は、念のため名前を変えて残す。
 
-bot は Claude Code として動くので、グローバルの指示（`~/.claude/CLAUDE.md`）を読む見込みで、`SOUL.md` には写さない。効いているかは8節で確かめる。
+```bash
+BOT=~/.orca/bots/<名前の小文字>
+TOOLKIT=<claude-toolkit の clone>   # 配布パッケージなら ~/Projects/saito-la/claude/vendor/claude-toolkit
+mv "$BOT/SOUL.md" "$BOT/SOUL.orig.md"
+ln -s "$TOOLKIT/tools/orca/bot-SOUL.md" "$BOT/SOUL.md"
+```
+
+持ち主が誰か、何を大事にしているかは書かず、グローバルの指示（`~/.claude/CLAUDE.md`）に任せる。bot は Claude Code として動くのでそれを読む。効いているかは8節で確かめる。持ち主に固有の受け持ち（別の機に開く、など）が要るなら、`bot-SOUL.md` を写して直すのではなく、グローバルの指示の側に書く。
 
 ## 6. iPhone・iPad をつなぐ
 
