@@ -53,7 +53,7 @@ export const DEFAULTS = {
   archiveScript: '~/.claude/scripts/archive-action-items.py',
   // 受信メールの自動処理（scripts/mail-autopilot.mjs）。marks は一部だけ書けば残りは既定の名前（mail-autopilot.mjs の DEFAULT_MARKS）
   mailAutopilot: {
-    mail: null, // { type: 'gmail', credential, account } か { type: 'outlook', mailctl }
+    mailboxes: null, // メールボックスの並び。各要素は { label, type: 'gmail', credential, account } か { label, type: 'outlook', mailctl }。rules・sinceDays・limit で個別に上書きできる
     owner: null, // 判断のプロンプトに渡す使い手の説明（役職・業務・宛先の傾向）
     rules: 'mail-rules.json', // 使い手が承認した規則（インスタンスからの相対）
     guidance: 'mail-guidance.md', // 判断の方針（インスタンスからの相対。無くてよい）

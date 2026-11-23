@@ -156,9 +156,9 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 - `credentialDir`（既定 `~/.config/gdrive-mcp`）：資格情報のフォルダ。`oauthClient`（既定 `credentials.json`）：OAuth のクライアント
 - `archiveScript`（既定 `~/.claude/scripts/archive-action-items.py`）：閉じた行を退避する道具
 - `mailAutopilot`：受信メールの自動処理（`mail-autopilot.mjs`）
-  - `mail`（必須）：メールの層。Gmail は `{ "type": "gmail", "credential": …, "account": … }`（試運転は gmail.readonly、本番は gmail.modify と gmail.labels の資格情報）。Outlook は `{ "type": "outlook", "mailctl": <mailctl.ps1 のパス> }`（まだ無い。`scripts/mail/outlook.mjs` の冒頭）
+  - `mailboxes`（必須）：扱うメールボックスの並び。仕事と私用のように1人が複数を持つときは並べ、1回の起動で順に扱う。各要素の `label`（必須）は Chat の文面と `data/mail-autopilot/<label>/` に使う名前。Gmail は `{ "label": …, "type": "gmail", "credential": …, "account": … }`（試運転は gmail.readonly、本番は gmail.modify と gmail.labels の資格情報）。Outlook は `{ "label": …, "type": "outlook", "mailctl": <mailctl.ps1 のパス> }`（まだ無い。`scripts/mail/outlook.mjs` の冒頭）。`rules`・`sinceDays`・`limit` を書けば、そのメールボックスだけ下の値を上書きする。1つが開けなくても、残りは扱う
   - `owner`（既定 なし）：判断のプロンプトに渡す使い手の説明。役職・業務・宛先の傾向を数行で書く
-  - `rules`（既定 `mail-rules.json`）：使い手が承認した規則。書き方は `scripts/mail/rules.mjs` の冒頭。判断が「アーカイブしてよさそう」とした形は、形ごとに1回だけ Chat で問い、案を `data/mail-autopilot/rule-proposals.json` に溜める。承認されたら案をこのファイルへ移す
+  - `rules`（既定 `mail-rules.json`）：使い手が承認した規則。書き方は `scripts/mail/rules.mjs` の冒頭。判断が「アーカイブしてよさそう」とした形は、形ごとに1回だけ Chat で問い、案を `data/mail-autopilot/<label>/rule-proposals.json` に溜める。承認されたら案をこのファイルへ移す
   - `guidance`（既定 `mail-guidance.md`）：判断に添える使い手の方針。無くてよい
   - `marks`：印の名前。`done`（既定 `秘書/済`）・`archived`（`秘書/自動アーカイブ`）・`attention`（`秘書/要対応`）・`ask`（`秘書/確認`）。Gmail ではラベル、Outlook では分類項目
   - `chat.webhookEnv`（既定 なし＝送らない）：問いと失敗を送る Google Chat の Webhook の URL を `CHAT_WEBHOOK_URL=` で持つファイル。`chat.hideSensitive`（既定 true）：人事・研究対象者の件の用件を Chat に出さない。使い手の組織の中のスペースなら false にしてよい
