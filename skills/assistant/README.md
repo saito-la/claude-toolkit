@@ -98,8 +98,8 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 
 ### 3.3. インスタンス
 
-1. インスタンスのリポジトリを作る。持ち主は使い手にし、private にする（today.md にメールの件名と予定の題名が載る）。GitHub なら `cd ~/Projects && gh repo create planner --private --clone`
-2. 骨組みを書く：`node ~/.claude/skills/assistant/scripts/new-instance.mjs ~/Projects/planner --account <使い手のアドレス>`。`assistant.json`・`CLAUDE.md`・`.gitignore`・開始時のフックを、無いものだけ書く。それぞれの理由はスクリプトの冒頭
+1. インスタンスのリポジトリを作る。持ち主は使い手にし、private にする（today.md にメールの件名と予定の題名が載る）。GitHub なら `cd <置き場> && gh repo create <インスタンス名> --private --clone`（置き場とインスタンス名は使い手が決める。例：`~/Projects/<インスタンス名>`）
+2. 骨組みを書く：`node ~/.claude/skills/assistant/scripts/new-instance.mjs <置き場>/<インスタンス名> --account <使い手のアドレス>`。`assistant.json`・`CLAUDE.md`・`.gitignore`・開始時のフックを、無いものだけ書く。それぞれの理由はスクリプトの冒頭
 3. 資格情報を取る（3.2）。骨組みの設定は、1つのファイル `.google-work.json` に `documents calendar.readonly gmail.readonly` を持たせる前提
 4. 作業用の文書と記録用の文書を、使い手の Google ドライブに Google ドキュメントで1つずつ作る。作業用の文書には見出し1の行 `# Capture`・`# Backlog`・`# 2w Schedule`・`# Sink` をこの順に置く（`docs/design.md`「作業用の文書のゾーン」）。それぞれの ID（URL の `/d/` と `/edit` の間）を `workDoc.id`・`logDoc.id` に入れる
 5. 設定を見直す（4章）。台帳を読む範囲（`ledgers.roots`・`ledgers.exclude`）と、送信済みから除く自動通知の件名。`features` は空から始め、使う機能だけを足す
