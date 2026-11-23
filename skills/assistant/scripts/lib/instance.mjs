@@ -39,7 +39,7 @@ export const DEFAULTS = {
   gmail: null,
   mailFiles: [],
   ledgers: { roots: ['.'], exclude: [] },
-  features: { appleNotes: false, done: false, sessions: false, checkNames: false, pjLinks: false, workload: false },
+  features: { appleNotes: false, done: false, sessions: false, checkNames: false, pjLinks: false, workload: false, mailAutopilot: false },
   appleNotes: { title: 'Capture' },
   sessions: { command: null }, // features.sessions のときのセッション記録の集計の道具（ctx・gaps を持つもの）
   checkNames: { sources: [], wikiEntities: null },
@@ -51,6 +51,18 @@ export const DEFAULTS = {
   prepPattern: '講義|講演|レクチャー|発表|セミナー|座長|演者|lecture',
   meetingBriefs: [], // 会議の資料の要約の置き場（`*` を含んでよい）。当日の日付で始まる md を集める（collect.mjs）
   archiveScript: '~/.claude/scripts/archive-action-items.py',
+  // 受信メールの自動処理（scripts/mail-autopilot.mjs）。marks は一部だけ書けば残りは既定の名前（mail-autopilot.mjs の DEFAULT_MARKS）
+  mailAutopilot: {
+    mail: null, // { type: 'gmail', credential, account } か { type: 'outlook', mailctl }
+    owner: null, // 判断のプロンプトに渡す使い手の説明（役職・業務・宛先の傾向）
+    rules: 'mail-rules.json', // 使い手が承認した規則（インスタンスからの相対）
+    guidance: 'mail-guidance.md', // 判断の方針（インスタンスからの相対。無くてよい）
+    marks: {},
+    chat: { webhookEnv: null, hideSensitive: true }, // webhookEnv が無ければ Chat に送らない
+    model: { model: 'sonnet', effort: 'medium' },
+    sinceDays: 14,
+    limit: 20,
+  },
 };
 
 export const expandHome = (p) => (typeof p === 'string' && (p === '~' || p.startsWith('~/')) ? join(HOME, p.slice(1)) : p);

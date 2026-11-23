@@ -67,6 +67,7 @@
 - `doc-remove.mjs`・`doc-migrate.mjs`：作業用の文書の行を台帳へ移し、文書から消す
 - `notes-to-doc.mjs`・`notes-remove.mjs`：Apple Notes の捕捉用のノートを作業用の文書へ移す（`features.appleNotes`）
 - `notice-done.mjs`：勤務先への連絡をチャットや口頭で済ませた日を `attendance-notices.csv` に残す
+- `mail-autopilot.mjs`：受信メールの自動処理。起動されるたびに、受信トレイの印の無い通を古い順に片付けて終わる。既定は試運転（判断だけで、メールに触らず、Chat にも送らない）で、`--live` で本番（`features.mailAutopilot`）。扱いと状態の持ち方は同ファイルの冒頭、部品は `scripts/mail/`（メールの層の Gmail と Outlook、規則の照合、判断、Chat）。返信の下書きと Claude での作業はまだ持たない
 - `auth-google.mjs`：Google の資格情報を取る（3章）
 - `new-instance.mjs`：新しいインスタンスの骨組みを書く（3.3）。これだけはインスタンスの外から、フォルダを引数で渡して呼ぶ
 - `ledgers.mjs`：台帳を探し、返事待ちの行を読む。インスタンスの外の道具（受信メールの自動処理など）も import するので、設定を読まない。関数の形を変えるときは、import している道具も直す
@@ -132,6 +133,7 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
   - `checkNames`：人名漢字の点検（`check-names.mjs`）
   - `pjLinks`：pj リンクと作業の振り分け（`pjLinks.link`・`pjLinks.open`）
   - `workload`：「やること」に見積を書き、`capacity` に収める点検（`docs/design.md`「業務量」）
+  - `mailAutopilot`：受信メールの自動処理の本番（`mail-autopilot.mjs --live`）。試運転はこれが無くても回る
 - `appleNotes.title`（既定 `Capture`）：取り込むノートの名前
 - `sessions.command`（`features.sessions` なら必須）：セッション記録を集計する道具を呼ぶコマンド。`ctx`（今の文脈の大きさ。10万トークンを超えたら終了コード 2）、`gaps --date <日付>`（作業ログの無いセッションの依頼の文）、`cost --since <時刻> --label <名前> --log <CSV>`（使った時間とトークン）を受けるもの
 - `checkNames.sources`（既定 空）：人名漢字の照合に使う名簿のパス。`checkNames.wikiEntities`（既定 なし）：知識ベースの人物ページのフォルダ（frontmatter に `aliases` と `sources` を持つ md）
@@ -153,6 +155,15 @@ node ~/.claude/skills/assistant/scripts/auth-google.mjs .google-work.json docume
 - `prepPattern`（既定 `講義|講演|レクチャー|発表|セミナー|座長|演者|lecture`）：話す側に立つかもしれない予定の題名の目印。当たった予定は候補で、話す役かは案内の本文で確かめる（`docs/design.md`「1件ずつの完了確認」）
 - `credentialDir`（既定 `~/.config/gdrive-mcp`）：資格情報のフォルダ。`oauthClient`（既定 `credentials.json`）：OAuth のクライアント
 - `archiveScript`（既定 `~/.claude/scripts/archive-action-items.py`）：閉じた行を退避する道具
+- `mailAutopilot`：受信メールの自動処理（`mail-autopilot.mjs`）
+  - `mail`（必須）：メールの層。Gmail は `{ "type": "gmail", "credential": …, "account": … }`（試運転は gmail.readonly、本番は gmail.modify と gmail.labels の資格情報）。Outlook は `{ "type": "outlook", "mailctl": <mailctl.ps1 のパス> }`（まだ無い。`scripts/mail/outlook.mjs` の冒頭）
+  - `owner`（既定 なし）：判断のプロンプトに渡す使い手の説明。役職・業務・宛先の傾向を数行で書く
+  - `rules`（既定 `mail-rules.json`）：使い手が承認した規則。書き方は `scripts/mail/rules.mjs` の冒頭。判断が「アーカイブしてよさそう」とした形は、形ごとに1回だけ Chat で問い、案を `data/mail-autopilot/rule-proposals.json` に溜める。承認されたら案をこのファイルへ移す
+  - `guidance`（既定 `mail-guidance.md`）：判断に添える使い手の方針。無くてよい
+  - `marks`：印の名前。`done`（既定 `秘書/済`）・`archived`（`秘書/自動アーカイブ`）・`attention`（`秘書/要対応`）・`ask`（`秘書/確認`）。Gmail ではラベル、Outlook では分類項目
+  - `chat.webhookEnv`（既定 なし＝送らない）：問いと失敗を送る Google Chat の Webhook の URL を `CHAT_WEBHOOK_URL=` で持つファイル。`chat.hideSensitive`（既定 true）：人事・研究対象者の件の用件を Chat に出さない。使い手の組織の中のスペースなら false にしてよい
+  - `model`（既定 Sonnet の medium）：判断に使うモデル
+  - `sinceDays`（既定 14）・`limit`（既定 20）：何日前の受信まで見るか、1回に何通扱うか
 
 パスは `~/` で始めてよい。
 
