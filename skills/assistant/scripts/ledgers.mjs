@@ -72,7 +72,7 @@ export function lastChanged(p) {
 // 「次：」の後に並べて書ける。「下書き <Gmail のメッセージID>」はそのメールへの返信の下書き（ID を省くと新しいメール）で、
 // 1行に複数並べてよい。「実行 <台帳のフォルダからの相対パス>」は下書きの前に走らせるスクリプト（届いたメールの本文を
 // 標準入力で受け、標準出力を下書きの材料にする）。次の一手は呼び手の道具が実行する。
-const WAIT_RE = /待ち：\s*((?:`?[^\s`,、]+@[^\s`,、]+`?\s*[,、]\s*)*`?[^\s`,、]+@[^\s`,、]+`?)\s+(\d{4}-\d{2}-\d{2})(?:\s+(\d+)回目)?/;
+const WAIT_RE = /待ち：\s*((?:`?[^\s`,、]+@[^\s`,、]+`?\s*[,、]\s*)*`?[^\s`,、]+@[^\s`,、]+`?)\s+(\d{4}-\d{2}-\d{2})(?:\s+(\d+)回目)?(?:\s+督促\s+(\d{4}-\d{2}-\d{2}))?/;
 const NEXT_RE = /次：((?:\s*(?:下書き(?:\s+`?[0-9a-f]{16}`?)?|実行\s+`?[^\s`]+`?))+)/;
 const STEP_RE = /下書き(?:\s+`?([0-9a-f]{16})`?)?|実行\s+`?([^\s`]+)`?/g;
 
@@ -99,7 +99,7 @@ export function collectWaiting(root = PROJECTS, paths = walkLedgers(root)) {
       if (!m) return;
       const addrs = m[1].split(/[,、]/).map((a) => a.replace(/[`\s]/g, '')).filter(Boolean);
       out.push({
-        path: relPath(root, p), line: i + 1, addrs, since: m[2], count: m[3] ? Number(m[3]) : 1,
+        path: relPath(root, p), line: i + 1, addrs, since: m[2], count: m[3] ? Number(m[3]) : 1, remindFrom: m[4] || null,
         next: parseNext(raw),
         text: raw.replace(/^\s*- \[[ !]\]\s+/, '').trim(),
       });

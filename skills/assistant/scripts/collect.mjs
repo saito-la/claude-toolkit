@@ -707,6 +707,7 @@ async function fetchBallReturned(paths) {
 // ── 督促の検知 ─────────────────────────────────────────
 // 返事待ちの行が REMIND_DAYS 日を過ぎても返事が無いとき、督促が要る項目として出す。
 // 行には「待ち：<アドレス> <最終の連絡日> <N>回目」と書く。N は連絡の通算回数（初回の照会が1回目、省略時は1）。
+// 相手に回答の期限を示したときは「督促 <YYYY-MM-DD>」を足し、その日より前には出さない（連絡日から REMIND_DAYS 日の方が遅ければそちら）。
 // 次の連絡は N+1 回目になり、宛先の追加（上長など）は escalation.csv が回数で決める。
 // 書式の正本は claude-toolkit の conventions/action-items-convention.md「返事待ちの行」、
 // 運用は docs/design.md「督促の扱い」。送った督促は行の日付と回数を書き換えて数える（自動では数えない）。
@@ -726,7 +727,7 @@ function loadEscalation() {
 
 async function buildReminders(waiting, sent, ymd) {
   const esc = loadEscalation();
-  const due = waiting.items.filter((w) => w.replies && !w.replies.length && daysBetween(w.since, ymd) >= REMIND_DAYS);
+  const due = waiting.items.filter((w) => w.replies && !w.replies.length && daysBetween(w.since, ymd) >= REMIND_DAYS && (!w.remindFrom || w.remindFrom <= ymd));
   let token = null;
   if (due.length && !NO_GMAIL) { try { token = await accessToken(GMAIL_CRED_PATH); } catch { token = null; } }
   return mapLimit(due, 5, async (w) => {
