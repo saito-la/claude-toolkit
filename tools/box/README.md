@@ -39,7 +39,11 @@ box は共有の「既定」を持たず、アカウントごとに別のファ�
 3. 使う操作に合わせてスコープを選ぶ。ファイルの読み書きなら Read/Write all files and folders、ユーザー・グループ・監査ログには管理用のスコープが要る
 4. テナントの Enterprise 設定「デフォルトで未公開Platformアプリを無効にする」がオンなら、テナントの管理者に有効にしてもらう
 
-### 3.2. ログイン
+### 3.2. 置き場
+
+`install.py` が `~/.local/bin/box` に置く（macOS・Linux は symlink、Windows は box.py を呼ぶ `box.cmd`）。`~/.local/bin` は Claude Code の導入先と同じで PATH に載っている。launchd など PATH の違う所から呼ぶスクリプトは、このパスを直接書く。
+
+### 3.3. ログイン
 
 ```bash
 box login <アカウント> --client-id <Client ID>   # Client Secret はプロンプトに貼る（表示されない）

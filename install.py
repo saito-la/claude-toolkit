@@ -28,6 +28,7 @@
   instructions/*.md              → ~/.claude/instructions/
   scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
   hooks/*.sh・hooks/*.py          → ~/.claude/hooks/（完了通知・見出しの検査。hooks/README.md）
+  tools/box/box.py               → ~/.local/bin/box（Windows は box.cmd）。Box API の呼び出し口（tools/box/README.md）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
   settings.json の Stop・UserPromptSubmit
                                  → Webhook を設定した端末だけ、完了通知が未登録なら追記
@@ -276,6 +277,51 @@ def place_hooks(root: Path, mode: str, plan: Plan, dry: bool, quiet: bool):
     settings.json の呼び出しが毎回空振りしていた（2026-09-28）。
     """
     _place_executables(root, "hooks", (".sh", ".py"), mode, plan, dry, quiet)
+
+
+def place_box(root: Path, dry: bool, quiet: bool):
+    """tools/box/box.py を `box` の名前で ~/.local/bin に置く。
+
+    ~/.local/bin は Claude Code の導入先と同じで、macOS・Windows とも PATH に載っている。
+    呼び出し側のスクリプトもこのパスを直接呼ぶ（launchd などは PATH に ~/.local/bin を持たないため）。
+    macOS・Linux は symlink、Windows は本スクリプトを動かした Python で box.py を呼ぶ box.cmd。
+    Box CLI（npm の @box/cli）も `box` の名前を使うので、PATH で先に見つかれば知らせる。
+    """
+    src = root / "tools" / "box" / "box.py"
+    if not src.is_file():
+        return
+    bindir = Path.home() / ".local" / "bin"
+    win = platform.system() == "Windows"
+    dest = bindir / ("box.cmd" if win else "box")
+    if dry:
+        log(f"（dry-run）{dest} に box を置く", quiet)
+        return
+    try:
+        bindir.mkdir(parents=True, exist_ok=True)
+        if win:
+            body = f'@"{sys.executable}" "{src}" %*\r\n'
+            # cmd.exe はバッチを ANSI のコードページで読む。ユーザー名が日本語でもパスが化けないようにそろえる
+            if not dest.exists() or dest.read_text(encoding="mbcs") != body:
+                dest.write_text(body, encoding="mbcs", newline="")
+        else:
+            if dest.is_symlink() or not dest.exists():
+                if not (dest.is_symlink() and Path(os.readlink(dest)) == src):
+                    if dest.is_symlink():
+                        dest.unlink()
+                    dest.symlink_to(src)
+                src.chmod(src.stat().st_mode | 0o111)
+            else:
+                log(f"⚠️  {dest} は別のファイルなので box を置きませんでした（中身を確かめてください）", quiet)
+                return
+    except OSError as e:
+        log(f"⚠️  box の配置に失敗しました（スキップして続行）: {e}", quiet)
+        return
+    found = shutil.which("box")
+    if found and Path(found).resolve() != dest.resolve():
+        log(f"⚠️  PATH で先に見つかる box は {found} です。Box CLI なら外してください（npm uninstall -g @box/cli）。"
+            f"同じ名前なので、Claude が box を呼ぶと Box CLI が動きます", quiet)
+    elif not found:
+        log(f"⚠️  {bindir} が PATH にありません。box を名前で呼ぶには PATH に足してください", quiet)
 
 
 def _place_executables(root: Path, name: str, suffixes, mode: str, plan: Plan, dry: bool, quiet: bool):
@@ -693,6 +739,7 @@ def main() -> int:
     place_scripts(root, a.mode, plan, a.dry_run, a.quiet)
     place_hooks(root, a.mode, plan, a.dry_run, a.quiet)
     has_sl = place_statusline(root, a.mode, plan, a.dry_run, a.quiet)
+    place_box(root, a.dry_run, a.quiet)
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
     sync_llm_wiki(a.mode, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
