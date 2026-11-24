@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""box-api.py の検証。本物の Box には触れず、手元に立てた偽の Box サーバーで確かめる。
+"""box.py の検証。本物の Box には触れず、手元に立てた偽の Box サーバーで確かめる。
 
-  python3 tools/box-api/test_box_api.py
+  python3 tools/box/test_box.py
 
 確かめること: ログイン（認可コード）、トークンの自動更新、更新用トークンの使い捨て（rotation）の下で
 8プロセスが同時に更新しても1回だけ更新されること、401 での更新とやり直し、429 の待ちとやり直し、
@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOOL = os.path.join(HERE, "box-api.py")
+TOOL = os.path.join(HERE, "box.py")
 
 
 class State:
@@ -163,7 +163,7 @@ def main():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = "http://127.0.0.1:%d" % PORT
     conf = tempfile.mkdtemp()
-    env = dict(os.environ, BOX_API_CONFIG_DIR=conf, BOX_API_BASE=base + "/2.0", BOX_UPLOAD_BASE=base + "/upload",
+    env = dict(os.environ, BOX_CONFIG_DIR=conf, BOX_API_BASE=base + "/2.0", BOX_UPLOAD_BASE=base + "/upload",
                BOX_OAUTH_BASE=base + "/oauth2", BOX_AUTHORIZE_URL=base + "/authorize")
     fails = []
 

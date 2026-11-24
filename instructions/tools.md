@@ -1,10 +1,10 @@
 ## Box ファイルへのアクセス
 
-Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず `box-api`（`tools/box-api`）で読む**（`box-api <アカウント> get files/<ID>`・`box-api <アカウント> download <ID> <保存先>`）。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
+Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず `box`（`tools/box`）で読む**（`box <アカウント> get files/<ID>`・`box <アカウント> download <ID> <保存先>`）。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
 
-**Box は `box-api <アカウント> <コマンド>` で扱い、アカウントを毎回名指しする。** 設定済みのアカウントは `box-api accounts` で見る。使い方の正本は `tools/box-api/README.md`。共有の「既定のアカウント」を持たず、トークンはアカウントごとのファイルにあるので、同時に動かしてもよく、ssh からも動く。アカウントの追加は `box-api login <アカウント>`（テナントに OAuth 2.0 の Platform App が要る）。
+**Box は `box <アカウント> <コマンド>` で扱い、アカウントを毎回名指しする。** 設定済みのアカウントは `box accounts` で見る。使い方の正本は `tools/box/README.md`。共有の「既定のアカウント」を持たず、トークンはアカウントごとのファイルにあるので、同時に動かしてもよく、ssh からも動く。アカウントの追加は `box login <アカウント>`（テナントに OAuth 2.0 の Platform App が要る）。
 
-Box CLI（`box`・`box-as`）は新しく使わない。2026-11-24 に、並行に動いた Box CLI が全環境の設定を空で上書きした（Keychain の1項目に全環境を置き、読めないと初期値で上書きし、書き込みは削除と追加の2手で行うため）。box-api が無く Box CLI しか無い環境で使うときは、`scripts/box-locked` を `~/bin/box` に配線し、全プロセスを1つずつ動かす。
+Box CLI（npm の `@box/cli`。`box-as`・`box-locked` を含む）は新しく使わない。2026-11-24 に、並行に動いた Box CLI が全環境の設定を空で上書きした（Keychain の1項目に全環境を置き、読めないと初期値で上書きし、書き込みは削除と追加の2手で行うため）。同じ `box` の名前を使うので、1台に両方を置かない。
 
 ## Dropbox へのアクセス
 

@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
-"""box-api — Box API を、アカウントごとのトークンで直接呼ぶ小さな呼び出し口。
+"""box — Box API を、アカウントごとのトークンで直接呼ぶ小さな呼び出し口。
 
 Box CLI の代わりに使う。Box CLI は全アカウントの設定を Keychain の1項目にまとめ、
 「既定のアカウント」を切り替えて使う作りで、並行に動くと全アカウントの設定を失う
-（2026-11-24 に実際に起きた）。box-api は共有の「既定」を持たず、アカウントごとに
+（2026-11-24 に実際に起きた）。box は共有の「既定」を持たず、アカウントごとに
 別のファイルへトークンを置くので、同時に動いても互いに壊さず、ssh からも動く。
 
 使い方:
-  box-api accounts                                  設定済みのアカウントを一覧する
-  box-api login <account> [--client-id ID] [--port N]
+  box accounts                                      設定済みのアカウントを一覧する
+  box login <account> [--client-id ID] [--port N]
                                                     ブラウザでログインしてトークンを得る
-  box-api <account> whoami                          ログイン中のユーザーを表示する
-  box-api <account> get|post|put|delete <path> [--query k=v ...] [--data JSON|@file]
+  box <account> whoami                              ログイン中のユーザーを表示する
+  box <account> get|post|put|delete <path> [--query k=v ...] [--data JSON|@file]
                                                     API を1回呼び、応答の JSON を出す
             [--all]                                 一覧の API を最後のページまで読んで entries をまとめる
-  box-api <account> download <file_id> <保存先>     ファイルを保存する（保存先がディレクトリなら元の名前で）
-  box-api <account> items <folder_id> [--fields type,id,name]
+  box <account> download <file_id> <保存先>         ファイルを保存する（保存先がディレクトリなら元の名前で）
+  box <account> items <folder_id> [--fields type,id,name]
                                                     フォルダの中身を全件、JSON の配列で出す
-  box-api <account> mkdir <parent_id> <名前> [--exist-ok]
+  box <account> mkdir <parent_id> <名前> [--exist-ok]
                                                     フォルダを作る（--exist-ok なら既存を返す）
-  box-api <account> upload <folder_id> <ファイル> [--name 名前] [--overwrite]
+  box <account> upload <folder_id> <ファイル> [--name 名前] [--overwrite]
                                                     フォルダへ上げる（--overwrite なら同名に新しい版として）
-  box-api <account> upload-version <file_id> <ファイル>
+  box <account> upload-version <file_id> <ファイル>
                                                     既存のファイルに新しい版として上げる
-  box-api <account> upload-dir <parent_id> <フォルダ> [--overwrite]
+  box <account> upload-dir <parent_id> <フォルダ> [--overwrite]
                                                     手元のフォルダを丸ごと上げる（既にあるファイルは飛ばす）
   上げる・作るコマンドは、できたファイル／フォルダの JSON（id・name など）を1つ出す。
 
-設定とトークン: ~/.config/box-api/<account>.json（権限 600）。client_id・client_secret・
+設定とトークン: ~/.config/box/<account>.json（権限 600）。client_id・client_secret・
 refresh_token・access_token を持つ。秘匿値なので画面に出さない・リポジトリに置かない。
 Box の refresh_token は使うたびに新しくなり古い方は無効になるので、同じアカウントを
 複数の Mac で使うときは、Mac ごとに login する（ファイルを写して共用しない）。
@@ -53,7 +53,7 @@ import urllib.request
 import uuid
 import webbrowser
 
-CONF_DIR = os.path.expanduser(os.environ.get("BOX_API_CONFIG_DIR", "~/.config/box-api"))
+CONF_DIR = os.path.expanduser(os.environ.get("BOX_CONFIG_DIR", "~/.config/box"))
 API = os.environ.get("BOX_API_BASE", "https://api.box.com/2.0")
 UPLOAD = os.environ.get("BOX_UPLOAD_BASE", "https://upload.box.com/api/2.0")
 OAUTH = os.environ.get("BOX_OAUTH_BASE", "https://api.box.com/oauth2")
@@ -63,7 +63,7 @@ REFRESH_MARGIN = 300  # 失効の5分前に更新する
 
 
 def die(msg, code=1):
-    print("box-api: " + msg, file=sys.stderr)
+    print("box: " + msg, file=sys.stderr)
     sys.exit(code)
 
 
@@ -81,7 +81,7 @@ def load(account):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        die("アカウント %s の設定が無い（box-api login %s）" % (account, account))
+        die("アカウント %s の設定が無い（box login %s）" % (account, account))
 
 
 def save(account, data):
@@ -158,7 +158,7 @@ def access_token(account, force=False):
         if force and conf.get("access_token") and conf.get("refreshed_at", 0) > time.time() - 30:
             return conf["access_token"]  # 直前に別のプロセスが更新した
         if not conf.get("refresh_token"):
-            die("アカウント %s はログインしていない（box-api login %s）" % (account, account))
+            die("アカウント %s はログインしていない（box login %s）" % (account, account))
         try:
             tok = token_request({
                 "grant_type": "refresh_token",
@@ -167,7 +167,7 @@ def access_token(account, force=False):
                 "client_secret": conf["client_secret"],
             })
         except RuntimeError as e:
-            die("%s。60日使わないと失効する。box-api login %s で入り直す" % (e, account))
+            die("%s。60日使わないと失効する。box login %s で入り直す" % (e, account))
         store_tokens(conf, tok)
         conf["refreshed_at"] = int(time.time())
         save(account, conf)
@@ -249,7 +249,7 @@ def cmd_login(a):
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.end_headers()
-            self.wfile.write("box-api: 受け取りました。このタブは閉じてよい。".encode())
+            self.wfile.write("box: 受け取りました。このタブは閉じてよい。".encode())
 
         def log_message(self, *x):
             pass
@@ -477,7 +477,7 @@ def main(argv):
     if argv[0] == "accounts":
         return cmd_accounts(None)
     if argv[0] == "login":
-        p = argparse.ArgumentParser(prog="box-api login")
+        p = argparse.ArgumentParser(prog="box login")
         p.add_argument("account")
         p.add_argument("--client-id")
         p.add_argument("--port", type=int)
@@ -485,9 +485,9 @@ def main(argv):
         return cmd_login(p.parse_args(argv[1:]))
     account, rest = argv[0], argv[1:]
     if not rest:
-        die("コマンドが無い（box-api --help）", 2)
+        die("コマンドが無い（box --help）", 2)
     cmd = rest[0]
-    p = argparse.ArgumentParser(prog="box-api %s %s" % (account, cmd))
+    p = argparse.ArgumentParser(prog="box %s %s" % (account, cmd))
     if cmd == "whoami":
         a = p.parse_args(rest[1:]); a.account = account
         return cmd_whoami(a)
@@ -523,7 +523,7 @@ def main(argv):
         p.add_argument("file_id"); p.add_argument("src")
         a = p.parse_args(rest[1:]); a.account = account
         return cmd_upload_version(a)
-    die("知らないコマンド: %s（box-api --help）" % cmd, 2)
+    die("知らないコマンド: %s（box --help）" % cmd, 2)
 
 
 if __name__ == "__main__":

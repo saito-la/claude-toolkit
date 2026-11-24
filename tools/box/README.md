@@ -1,6 +1,7 @@
-# box-api
+# box
 
 作成日：2026-11-24
+改訂日：2026-11-25
 
 ## 1. 目的
 
@@ -17,11 +18,11 @@ Box CLI 4.x（macOS）は、全アカウントの設定を Keychain の1項目�
 
 そのため、並行に動くと全アカウントの設定を失う（2026-11-24 に実際に起きた）。Keychain は ssh のセッションから読めないので、ssh 越しにも使えない。
 
-box-api は共有の「既定」を持たず、アカウントごとに別のファイルへトークンを置く。同時に動いても互いを壊さず、ssh からも動く。
+box は共有の「既定」を持たず、アカウントごとに別のファイルへトークンを置く。同時に動いても互いを壊さず、ssh からも動く。
 
 ## 2. 設計
 
-- 設定とトークンは `~/.config/box-api/<アカウント>.json`（権限 600、ディレクトリは 700）に置く。中身は client_id・client_secret・refresh_token・access_token・期限。書き込みは一時ファイルからの rename で、途中で落ちても壊れない
+- 設定とトークンは `~/.config/box/<アカウント>.json`（権限 600、ディレクトリは 700）に置く。中身は client_id・client_secret・refresh_token・access_token・期限。書き込みは一時ファイルからの rename で、途中で落ちても壊れない
 - アクセストークンは期限の5分前に自動で更新する。Box の refresh_token は使い捨てで、使うと新しいものに替わり、古い方は無効になる。更新はアカウントごとの flock の下で1プロセスずつ行い、待っていた側は更新済みのトークンを使う
 - 401 は1回だけ更新してやり直す。429・5xx は Retry-After に従って待ち、やり直す
 - refresh_token は60日使わないと失効する。そのときは `login` で入り直す
@@ -41,30 +42,30 @@ box-api は共有の「既定」を持たず、アカウントごとに別のフ
 ### 3.2. ログイン
 
 ```bash
-box-api login <アカウント> --client-id <Client ID>   # Client Secret はプロンプトに貼る（表示されない）
-box-api accounts                                     # 設定済みのアカウントとログインの状態
-box-api <アカウント> whoami
+box login <アカウント> --client-id <Client ID>   # Client Secret はプロンプトに貼る（表示されない）
+box accounts                                     # 設定済みのアカウントとログインの状態
+box <アカウント> whoami
 ```
 
 ## 4. 使い方
 
 ```bash
-box-api <アカウント> get folders/0/items --query limit=1000 --all     # 一覧を最後まで
-box-api <アカウント> get files/123 --query fields=name,size
-box-api <アカウント> put folders/123 --data '{"name":"新しい名前"}'
-box-api <アカウント> post collaborations --data @collab.json
-box-api <アカウント> delete collaborations/456
-box-api <アカウント> download 123 ./dl/                               # ディレクトリなら元の名前で保存
-box-api <アカウント> upload 789 ./資料.pdf                            # フォルダ 789 へ新規
-box-api <アカウント> upload-version 123 ./資料.pdf                    # 既存ファイル 123 の新しい版
+box <アカウント> get folders/0/items --query limit=1000 --all     # 一覧を最後まで
+box <アカウント> get files/123 --query fields=name,size
+box <アカウント> put folders/123 --data '{"name":"新しい名前"}'
+box <アカウント> post collaborations --data @collab.json
+box <アカウント> delete collaborations/456
+box <アカウント> download 123 ./dl/                               # ディレクトリなら元の名前で保存
+box <アカウント> upload 789 ./資料.pdf                            # フォルダ 789 へ新規
+box <アカウント> upload-version 123 ./資料.pdf                    # 既存ファイル 123 の新しい版
 ```
 
-パスは `https://api.box.com/2.0/` からの相対で書く。応答は JSON のまま標準出力に出るので、`python3 -c` や `jq` で読む。50MB を超えるアップロード（分割アップロード）には未対応。
+フォルダの一覧（`items`）・フォルダの作成（`mkdir`）・フォルダごとのアップロード（`upload-dir`）を含む全コマンドは `box --help` に出る。パスは `https://api.box.com/2.0/` からの相対で書く。応答は JSON のまま標準出力に出るので、`python3 -c` や `jq` で読む。50MB を超えるアップロード（分割アップロード）には未対応。
 
 ## 5. 検証
 
 ```bash
-python3 tools/box-api/test_box_api.py
+python3 tools/box/test_box.py
 ```
 
 本物の Box には触れず、手元に立てた偽の Box サーバーで確かめる。確かめる項目は次のとおり。
