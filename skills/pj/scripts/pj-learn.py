@@ -27,6 +27,7 @@ import json
 import os
 import platform
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -73,6 +74,12 @@ PER_PATH_LIMIT = 10
 # 短すぎる文は憶えない。プロジェクト名そのものは L1 が拾うし、N-gram では
 # 2〜3文字が多数のプロジェクトに当たってノイズにしかならない。
 MIN_QUERY_LEN = 4
+MESSAGE_ID_PREFIX = re.compile(r"^\s*Message-ID\s*:\s*<[^<>\s]+>\s*", re.IGNORECASE)
+
+
+def match_text(query):
+    """照合用の本文。メールの Message-ID は用件を示す語として扱わない。"""
+    return MESSAGE_ID_PREFIX.sub("", query)
 
 
 def _read_file(path):
@@ -149,7 +156,7 @@ def _write(records):
     os.replace(tmp, STORE)                            # 途中で落ちても壊れた状態を残さない
 
 
-def load():
+def load(*, for_matching=False):
     """{relpath: [クエリ文, ...]} を返す。pj-ngram.score_entries の extra に渡す。
 
     併合後にも PER_PATH_LIMIT を効かせる。各機のファイルは自分の中で間引かれているが、
@@ -161,7 +168,9 @@ def load():
         qs = out.setdefault(rec["path"], [])
         if len(qs) >= PER_PATH_LIMIT:
             continue
-        qs.append(rec["q"])
+        query = match_text(rec["q"]) if for_matching else rec["q"]
+        if query and query not in qs:
+            qs.append(query)
     for qs in out.values():
         qs.reverse()
     return out

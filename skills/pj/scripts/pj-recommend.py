@@ -37,6 +37,7 @@ HOME = pathlib.Path.home()
 PROJECTS = HOME / "Projects"
 CACHE_DIR = HOME / ".cache" / "pj"
 CACHE = CACHE_DIR / "index.json"
+INDEX_VERSION = 2
 
 MAXDEPTH = 5            # find -maxdepth 5 相当（PROJECTS からのディレクトリ深さ）
 PRUNE_DIRS = {"node_modules", "__pycache__"}
@@ -48,7 +49,7 @@ BOUNDARY_LIMIT = 300
 
 # frontmatter は CLAUDE.md 先頭の YAML風ブロックのみ対象（key: value と [list] のみ。PyYAML不採用）
 FRONTMATTER_RE = re.compile(r"^---[ \t]*\n(.*?)\n---[ \t]*\n", re.DOTALL)
-FRONTMATTER_LIST_FIELDS = ("domain", "aliases", "related", "unit")
+FRONTMATTER_LIST_FIELDS = ("domain", "aliases", "route_patterns", "related", "unit")
 FRONTMATTER_BOOL_FIELDS = ("confidential",)
 JP_TOKEN_RE = re.compile(r"[0-9A-Za-z]+|[一-鿿぀-ヿ]{2,}")
 MINE_STOPWORDS = {
@@ -173,6 +174,7 @@ def build_entries(paths):
             "unit": fm.get("unit", []),
             "domain": fm.get("domain", []),
             "aliases": fm.get("aliases", []),
+            "route_patterns": fm.get("route_patterns", []),
             "lifecycle": fm.get("lifecycle", ""),
             "status": fm.get("status", ""),
             "confidential": fm.get("confidential", False),
@@ -188,13 +190,14 @@ def load_or_build(rebuild=False):
     if not rebuild and CACHE.exists():
         try:
             data = json.loads(CACHE.read_text(encoding="utf-8"))
-            if data.get("fingerprint") == fp:
+            if data.get("version") == INDEX_VERSION and data.get("fingerprint") == fp:
                 return data["entries"]
         except (OSError, ValueError):
             pass
     entries = build_entries(paths)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps({"fingerprint": fp, "entries": entries}, ensure_ascii=False), encoding="utf-8")
+    CACHE.write_text(json.dumps({"version": INDEX_VERSION, "fingerprint": fp, "entries": entries},
+                                ensure_ascii=False), encoding="utf-8")
     return entries
 
 

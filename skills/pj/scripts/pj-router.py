@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """pj-router.py — 自然文の「やりたいこと」から起動すべきプロジェクトを決定する2層ルーター。
 
-  L1  決定的語彙一致（aliases/path/domain/purpose/boundary）— exact-alias/path の単一ヒットのみ即決
+  L1  パスの明記、定型の依頼（route_patterns）、語彙一致（aliases/path/domain/purpose/boundary）
   L2  外れたら圧縮カタログを返し、判断は呼び出し側に委ねる（/pj なら Claude 本体、シェルなら fzf）
       このとき候補の並びは pj-ngram.py の文字N-gram類似度で決める（2026-08-29 追加）。
       L1 は「登録済みの語がクエリ文にそのまま含まれるか」しか見ないため日本語の長文は
       ほぼ必ず空振りし、L2 は全98件を並べるだけだった。並べ替えを入れると
       「治験の安全性報告の様式を直したい」で utokyo/CRPC/safety が1位に来る。
-      判定そのものは変えていない（DIRECT の条件は従来どおり L1 のみ）。
+      DIRECT の条件は L1 のみ。
 
 2026-07-26 に4層 → 2層へ簡素化した。撤去したもの：
   - L0 学習キャッシュ（choices.jsonl）と learn/correct — 再出現クエリ17件はすべて
@@ -63,6 +63,27 @@ TOKEN_RE = re.compile(r"[0-9A-Za-z]+|[一-鿿぀-ヿ]{2,}")
 
 def normalize(s):
     return unicodedata.normalize("NFKC", s or "").strip().casefold()
+
+
+def match_text(query):
+    return pj_learn.match_text(normalize(query))
+
+
+def literal_path(query, entries):
+    """依頼に明記されたパスのうち、最も長いものを優先する。"""
+    query = pj_learn.match_text(query)
+    return max((e["path"] for e in entries if "/" in e["path"] and e["path"] in query),
+               key=len, default=None)
+
+
+def matches_pattern(query, entry):
+    for pattern in entry.get("route_patterns", []):
+        try:
+            if re.search(pattern, query):
+                return True
+        except re.error as exc:
+            print(f'{entry["path"]}: route_patterns: {exc}', file=sys.stderr)
+    return False
 
 
 def tokenize(s):
@@ -204,8 +225,16 @@ def rank_candidates(paths, matches, scores=None):
 
 
 def route(query):
-    q_norm = normalize(query)
     entries = pj_recommend.load_or_build()
+    explicit = literal_path(query, entries)
+    if explicit:
+        return ("DIRECT", explicit)
+    q_norm = match_text(query)
+    fixed = [(entry["path"], "定型の依頼") for entry in entries if matches_pattern(q_norm, entry)]
+    if len(fixed) == 1:
+        return ("DIRECT", fixed[0][0])
+    if fixed:
+        return ("CANDIDATES", fixed)
 
     matches = l1_match(q_norm, entries)
 
@@ -217,10 +246,10 @@ def route(query):
             # 過去に選ばれたときのクエリ文を照合テキストへ混ぜる（pj-learn.py）。
             # 学習が読めなくても順位が付かないだけなので、失敗は握りつぶして進む。
             try:
-                learned = pj_learn.load()
+                learned = pj_learn.load(for_matching=True)
             except OSError:
                 learned = {}
-            cache["v"] = pj_ngram.score_entries(query, entries, learned)
+            cache["v"] = pj_ngram.score_entries(q_norm, entries, learned)
         return cache["v"]
 
     for tier in (1, 2):
@@ -272,13 +301,16 @@ def request_text(query, relpath, body=None):
     q = normalize(query)
     if body is None:
         names = [normalize(x) for x in relpath.split("/")]
+        is_request = False
         for e in pj_recommend.load_or_build():
             if e["path"] == relpath:
                 names += [normalize(a) for a in (e.get("aliases") or [])]
+                is_request = matches_pattern(match_text(query), e)
+                break
         rest = q
         for n in sorted(filter(None, names), key=len, reverse=True):
             rest = rest.replace(n, " ")
-        if len(FILLER_RE.sub("", rest)) < 4:
+        if not is_request and len(FILLER_RE.sub("", rest)) < 4:
             return ""
         body = query.strip()
     return body.rstrip() + "\n\n" + MARK.format(query=" ".join(query.split()), relpath=relpath)
