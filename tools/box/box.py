@@ -36,7 +36,7 @@ Box の refresh_token は使うたびに新しくなり古い方は無効にな�
 作り、Redirect URI に http://localhost:<port>/callback（既定 3000）を登録する。
 """
 import argparse
-import fcntl
+import errno
 import getpass
 import http.server
 import json
@@ -52,6 +52,11 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 CONF_DIR = os.path.expanduser(os.environ.get("BOX_CONFIG_DIR", "~/.config/box"))
 API = os.environ.get("BOX_API_BASE", "https://api.box.com/2.0")
@@ -70,18 +75,24 @@ def die(msg, code=1):
 # ---- 設定ファイル（アカウントごと） --------------------------------------------
 
 def conf_path(account):
-    if not account or "/" in account or account.startswith("."):
+    if not account or any(c in account for c in '/\\:') or account.startswith("."):
         die("アカウント名が不正: %r" % account, 2)
     return os.path.join(CONF_DIR, account + ".json")
 
 
 def load(account):
     p = conf_path(account)
-    try:
-        with open(p, encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        die("アカウント %s の設定が無い（box login %s）" % (account, account))
+    for i in range(50):
+        try:
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            die("アカウント %s の設定が無い（box login %s）" % (account, account))
+        except PermissionError:
+            # Windows では、別のプロセスが置き換えている最中のファイルを開けないことがある
+            if os.name != "nt" or i == 49:
+                raise
+            time.sleep(0.1)
 
 
 def save(account, data):
@@ -92,27 +103,54 @@ def save(account, data):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=1)
         os.chmod(tmp, 0o600)
-        os.replace(tmp, conf_path(account))
+        replace(tmp, conf_path(account))
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
 
 
+def replace(src, dst):
+    """os.replace。Windows では、別のプロセスが dst を開いている間は失敗するので、少し待ってやり直す。"""
+    for i in range(50):
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if os.name != "nt" or i == 49:
+                raise
+            time.sleep(0.1)
+
+
 class AccountLock:
-    """アカウントごとの排他（flock）。トークンの更新を1プロセスずつにする。"""
+    """アカウントごとの排他。トークンの更新を1プロセスずつにする。
+    ロックはカーネルが持ち、持ち主のプロセスが終われば外れるので、残骸で詰まらない。
+    macOS・Linux は flock、Windows は msvcrt.locking（ファイルの先頭1バイト）で取る。"""
 
     def __init__(self, account):
         os.makedirs(CONF_DIR, mode=0o700, exist_ok=True)
         self.path = os.path.join(CONF_DIR, "." + account + ".lock")
 
     def __enter__(self):
-        self.f = open(self.path, "a")
-        fcntl.flock(self.f, fcntl.LOCK_EX)
+        self.f = open(self.path, "a+")
+        if os.name == "nt":
+            self.f.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(self.f.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError as e:  # LK_LOCK は約10秒で諦めるので、取れるまで繰り返す
+                    if e.errno not in (errno.EDEADLOCK, errno.EACCES):
+                        raise
+        else:
+            fcntl.flock(self.f, fcntl.LOCK_EX)
         return self
 
     def __exit__(self, *a):
-        fcntl.flock(self.f, fcntl.LOCK_UN)
+        if os.name == "nt":
+            self.f.seek(0)
+            msvcrt.locking(self.f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(self.f, fcntl.LOCK_UN)
         self.f.close()
 
 
@@ -360,7 +398,7 @@ def cmd_download(a):
     tmp = dest + ".part"
     with open(tmp, "wb") as f:
         f.write(data)
-    os.replace(tmp, dest)
+    replace(tmp, dest)
     print(dest)
 
 
@@ -471,6 +509,10 @@ def cmd_upload_dir(a):
 
 
 def main(argv):
+    # 出力はどの OS でも UTF-8 にそろえる（Windows の既定は cp932 などで、日本語の名前を含む JSON が化けるか落ちる）
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return

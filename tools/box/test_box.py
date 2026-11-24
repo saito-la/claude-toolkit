@@ -153,11 +153,12 @@ class Mock(http.server.BaseHTTPRequestHandler):
 
 
 def run(args, env, inp=None):
-    return subprocess.run([sys.executable, TOOL] + args, env=env, input=inp, capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, TOOL] + args, env=env, input=inp, capture_output=True, text=True, encoding="utf-8", timeout=60)
 
 
 def main():
     global PORT
+    sys.stdout.reconfigure(encoding="utf-8")  # Windows の既定（cp932 など）でも結果の行を化けさせない
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Mock)
     PORT = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -174,7 +175,7 @@ def main():
 
     # 1 ログイン：ブラウザの代わりに、表示された URL の redirect_uri へ code と state を返す
     p = subprocess.Popen([sys.executable, TOOL, "login", "t", "--client-id", "cid", "--port", "18765", "--no-browser"],
-                         env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                         env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
     p.stdin.write("csecret\n"); p.stdin.flush()
     url = None
     for _ in range(50):
@@ -187,13 +188,14 @@ def main():
     urllib.request.urlopen(cb).read()
     out, err = p.communicate(timeout=30)
     ok("login", p.returncode == 0 and "me@example.org" in out, out + err)
-    mode = oct(os.stat(os.path.join(conf, "t.json")).st_mode & 0o777)
-    ok("設定ファイルの権限が 600", mode == "0o600", mode)
+    if os.name != "nt":  # Windows の権限は chmod では決まらない（ユーザーのプロファイルの下で守る）
+        mode = oct(os.stat(os.path.join(conf, "t.json")).st_mode & 0o777)
+        ok("設定ファイルの権限が 600", mode == "0o600", mode)
 
     def expire():
-        c = json.load(open(os.path.join(conf, "t.json")))
+        c = json.load(open(os.path.join(conf, "t.json"), encoding="utf-8"))
         c["expires_at"] = 0
-        json.dump(c, open(os.path.join(conf, "t.json"), "w"))
+        json.dump(c, open(os.path.join(conf, "t.json"), "w", encoding="utf-8"))
 
     # 2 期限切れなら自動で更新する
     expire()
@@ -203,15 +205,15 @@ def main():
     # 3 8プロセスが同時に更新しても、更新は1回だけで全員が通る（更新用トークンは使い捨て）
     expire()
     before = State.n_refresh
-    ps = [subprocess.Popen([sys.executable, TOOL, "t", "whoami"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(8)]
+    ps = [subprocess.Popen([sys.executable, TOOL, "t", "whoami"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8") for _ in range(8)]
     rcs = [q.wait(timeout=60) for q in ps]
     ok("同時8プロセスで更新は1回・全員成功", rcs == [0] * 8 and State.n_refresh == before + 1,
        "rcs=%s refresh=%d" % (rcs, State.n_refresh - before))
 
     # 4 アクセストークンが無効（期限内）なら 401 を受けて更新し、やり直す
-    c = json.load(open(os.path.join(conf, "t.json")))
+    c = json.load(open(os.path.join(conf, "t.json"), encoding="utf-8"))
     c["access_token"] = "bogus"; c["refreshed_at"] = 0
-    json.dump(c, open(os.path.join(conf, "t.json"), "w"))
+    json.dump(c, open(os.path.join(conf, "t.json"), "w", encoding="utf-8"))
     r = run(["t", "whoami"], env)
     ok("401 で更新してやり直す", r.returncode == 0, r.stderr)
 
@@ -233,7 +235,7 @@ def main():
 
     # 8 アップロード（日本語のファイル名）
     src = os.path.join(d, "資料.txt")
-    open(src, "w").write("hello")
+    open(src, "w", encoding="utf-8").write("hello")
     r = run(["t", "upload", "123", src], env)
     ok("アップロード（日本語の名前が届く）", r.returncode == 0 and json.loads(r.stdout)["name"] == "資料.txt", r.stdout + r.stderr)
 
@@ -267,9 +269,9 @@ def main():
        and sub and [e["name"] for e in State.fs[sub[0]["id"]]["items"]] == ["b.pdf"], u1.stderr + u2.stderr)
 
     # 9 失効した更新用トークンでは、入り直すよう案内して止まる
-    c = json.load(open(os.path.join(conf, "t.json")))
+    c = json.load(open(os.path.join(conf, "t.json"), encoding="utf-8"))
     c["expires_at"] = 0; c["refresh_token"] = "dead"
-    json.dump(c, open(os.path.join(conf, "t.json"), "w"))
+    json.dump(c, open(os.path.join(conf, "t.json"), "w", encoding="utf-8"))
     r = run(["t", "whoami"], env)
     ok("失効した更新用トークンで止まる", r.returncode != 0 and "login" in r.stderr, r.stderr)
 
