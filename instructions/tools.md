@@ -4,6 +4,8 @@ Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わ
 
 **複数の Box アカウントは `box-as <環境名> <サブコマンド...>`（`scripts/box-as`）で使い分ける。** Box CLI の既定環境を一時的に切り替えて1回だけ実行し、終わったら元へ戻す（ロックで直列化）。`box configure:environments:set-current` で既定を切り替えたまま放置しない。環境が無い機では止まり、別アカウントの結果を黙って返さない。環境の追加は `box login --default-box-app --name <環境名>`（ブラウザでのログインは本人の操作）。個人環境では `box-nho`・`box-utokyo` 等のラッパーがこれを呼ぶ。
 
+**box は1台の Mac で同時に2つ動かさない。** Box CLI 4.x（macOS）は、起動時に Keychain の環境設定を読めないと全環境を空で上書きし、書き込みは削除と追加の2手で行う。並行に動くと一方の書き込みの隙間で他方が起動し、全環境が消える（2026-11-24 に実際に起きた）。`scripts/box-locked` を `~/bin/box` に配線し、素の `box` も `box-as` も全プロセス共通の flock の下で直列に動かす。ロックを取れなければ実行せずに止まる。
+
 ## Dropbox へのアクセス
 
 **Dropbox は自前実装の MCP サーバー（`dropbox-personal` 等）だけを使う。「claude.ai Dropbox」（Dash、`mcp__claude_ai_Dropbox__*`）は使わない。** Dash は接続済みと表示されていても、どのツールを呼んでも `missing required resultType` のプロトコルエラーを返して機能しない（2026-09-06 と 2026-09-16 に同じ失敗を確認）。「接続済み＝使える」ではないので、繋がって見えることを根拠に呼ばない。
