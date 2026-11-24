@@ -29,6 +29,8 @@ class State:
     access = set()          # 有効なアクセストークン
     n_refresh = 0
     n_429 = 0
+    fs = {"500": {"name": "root", "items": []}}   # フォルダ id → 中身（type,id,name）
+    next_id = 1000
 
 
 class Mock(http.server.BaseHTTPRequestHandler):
@@ -77,7 +79,39 @@ class Mock(http.server.BaseHTTPRequestHandler):
                 return
             m = re.search(rb'name="attributes"\r\n\r\n(.*?)\r\n', body, re.S)
             attrs = json.loads(m.group(1))
+            pid = attrs["parent"]["id"]
+            if pid in State.fs:
+                same = [e for e in State.fs[pid]["items"] if e["name"] == attrs["name"]]
+                if same:
+                    return self.send(409, {"code": "item_name_in_use", "context_info": {"conflicts": dict(same[0], type="file")}})
+                State.next_id += 1
+                e = {"type": "file", "id": str(State.next_id), "name": attrs["name"], "version": 1}
+                State.fs[pid]["items"].append(e)
+                return self.send(201, {"entries": [e]})
             return self.send(201, {"entries": [{"type": "file", "id": "9", "name": attrs["name"], "size": len(body)}]})
+        m = re.match(r"/upload/files/(\d+)/content$", u.path)
+        if m:
+            if not self.authed():
+                return
+            for f in State.fs.values():
+                for e in f["items"]:
+                    if e["id"] == m.group(1):
+                        e["version"] += 1
+                        return self.send(201, {"entries": [e]})
+            return self.send(404, {})
+        if u.path == "/2.0/folders":
+            if not self.authed():
+                return
+            req = json.loads(body)
+            pid = req["parent"]["id"]
+            same = [e for e in State.fs[pid]["items"] if e["name"] == req["name"]]
+            if same:
+                return self.send(409, {"code": "item_name_in_use", "context_info": {"conflicts": [same[0]]}})
+            State.next_id += 1
+            e = {"type": "folder", "id": str(State.next_id), "name": req["name"]}
+            State.fs[pid]["items"].append(e)
+            State.fs[e["id"]] = {"name": req["name"], "items": []}
+            return self.send(201, e)
         self.send(404, {})
 
     def do_GET(self):
@@ -96,6 +130,11 @@ class Mock(http.server.BaseHTTPRequestHandler):
             if first:
                 return self.send(429, {}, {"Retry-After": "1"})
             return self.send(200, {"ok": True})
+        m = re.match(r"/2.0/folders/(\d+)/items$", u.path)
+        if m and m.group(1) in State.fs:
+            items = State.fs[m.group(1)]["items"]
+            off = int(q.get("offset", 0))
+            return self.send(200, {"entries": items[off:off + int(q.get("limit", 100))], "total_count": len(items)})
         if u.path == "/2.0/folders/0/items":
             total, limit = 250, int(q.get("limit", 100))
             if q.get("usemarker"):
@@ -196,7 +235,36 @@ def main():
     src = os.path.join(d, "資料.txt")
     open(src, "w").write("hello")
     r = run(["t", "upload", "123", src], env)
-    ok("アップロード（日本語の名前が届く）", r.returncode == 0 and json.loads(r.stdout)["entries"][0]["name"] == "資料.txt", r.stdout + r.stderr)
+    ok("アップロード（日本語の名前が届く）", r.returncode == 0 and json.loads(r.stdout)["name"] == "資料.txt", r.stdout + r.stderr)
+
+    # 8b 同じ名前：--overwrite なしは止まり、ありなら新しい版になる
+    r1 = run(["t", "upload", "500", src], env)
+    r2 = run(["t", "upload", "500", src], env)
+    r3 = run(["t", "upload", "500", src, "--overwrite"], env)
+    ok("同名は止まり、--overwrite で新しい版", r1.returncode == 0 and r2.returncode != 0 and r3.returncode == 0 and json.loads(r3.stdout)["version"] == 2,
+       r2.stderr + r3.stdout + r3.stderr)
+
+    # 8c mkdir と --exist-ok、items
+    a1 = run(["t", "mkdir", "500", "回のフォルダ"], env)
+    a2 = run(["t", "mkdir", "500", "回のフォルダ"], env)
+    a3 = run(["t", "mkdir", "500", "回のフォルダ", "--exist-ok"], env)
+    ok("mkdir（既存は止まり、--exist-ok で同じ id）", a1.returncode == 0 and a2.returncode != 0 and a3.returncode == 0
+       and json.loads(a1.stdout)["id"] == json.loads(a3.stdout)["id"], a2.stderr + a3.stderr)
+    it = run(["t", "items", "500"], env)
+    names = sorted(e["name"] for e in json.loads(it.stdout))
+    ok("items で全件を配列で", it.returncode == 0 and names == ["回のフォルダ", "資料.txt"], it.stdout + it.stderr)
+
+    # 8d upload-dir：入れ子のフォルダを丸ごと。2回目は既存を飛ばす
+    tree = os.path.join(d, "審査資料")
+    os.makedirs(os.path.join(tree, "添付"))
+    open(os.path.join(tree, "a.pdf"), "w").write("a")
+    open(os.path.join(tree, "添付", "b.pdf"), "w").write("b")
+    u1 = run(["t", "upload-dir", "500", tree], env)
+    u2 = run(["t", "upload-dir", "500", tree], env)
+    top = json.loads(u1.stdout)["id"] if u1.returncode == 0 else None
+    sub = [e for e in State.fs.get(top, {"items": []})["items"] if e["type"] == "folder"]
+    ok("upload-dir（入れ子、2回目は既存を飛ばす）", u1.returncode == 0 and u2.returncode == 0 and len(State.fs[top]["items"]) == 2
+       and sub and [e["name"] for e in State.fs[sub[0]["id"]]["items"]] == ["b.pdf"], u1.stderr + u2.stderr)
 
     # 9 失効した更新用トークンでは、入り直すよう案内して止まる
     c = json.load(open(os.path.join(conf, "t.json")))

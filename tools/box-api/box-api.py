@@ -15,10 +15,17 @@ Box CLI の代わりに使う。Box CLI は全アカウントの設定を Keycha
                                                     API を1回呼び、応答の JSON を出す
             [--all]                                 一覧の API を最後のページまで読んで entries をまとめる
   box-api <account> download <file_id> <保存先>     ファイルを保存する（保存先がディレクトリなら元の名前で）
-  box-api <account> upload <folder_id> <ファイル> [--name 名前]
-                                                    フォルダへ新しいファイルとして上げる
+  box-api <account> items <folder_id> [--fields type,id,name]
+                                                    フォルダの中身を全件、JSON の配列で出す
+  box-api <account> mkdir <parent_id> <名前> [--exist-ok]
+                                                    フォルダを作る（--exist-ok なら既存を返す）
+  box-api <account> upload <folder_id> <ファイル> [--name 名前] [--overwrite]
+                                                    フォルダへ上げる（--overwrite なら同名に新しい版として）
   box-api <account> upload-version <file_id> <ファイル>
                                                     既存のファイルに新しい版として上げる
+  box-api <account> upload-dir <parent_id> <フォルダ> [--overwrite]
+                                                    手元のフォルダを丸ごと上げる（既にあるファイルは飛ばす）
+  上げる・作るコマンドは、できたファイル／フォルダの JSON（id・name など）を1つ出す。
 
 設定とトークン: ~/.config/box-api/<account>.json（権限 600）。client_id・client_secret・
 refresh_token・access_token を持つ。秘匿値なので画面に出さない・リポジトリに置かない。
@@ -373,23 +380,94 @@ def multipart(attributes, path):
     return {"Content-Type": "multipart/form-data; boundary=" + boundary}, b"".join(parts)
 
 
-def cmd_upload(a):
-    if os.path.getsize(a.src) > 50 * 1024 * 1024:
-        die("50MB を超えるファイルは分割アップロードが要る（未対応）")
-    attrs = {"name": a.name or os.path.basename(a.src), "parent": {"id": a.folder_id}}
-    h, body = multipart(attrs, a.src)
-    st, _, data = call(a.account, "POST", UPLOAD + "/files/content", h, body)
+def upload_file(account, folder_id, path, name=None, overwrite=False):
+    """フォルダへ上げる。同じ名前があれば、overwrite なら新しい版として上げ、でなければ止まる。"""
+    if os.path.getsize(path) > 50 * 1024 * 1024:
+        die("50MB を超えるファイルは分割アップロードが要る（未対応）: " + path)
+    name = name or os.path.basename(path)
+    h, body = multipart({"name": name, "parent": {"id": str(folder_id)}}, path)
+    st, _, data = call(account, "POST", UPLOAD + "/files/content", h, body)
+    if st == 409 and overwrite:
+        conflict = json.loads(data).get("context_info", {}).get("conflicts", {})
+        if conflict.get("type") == "file":
+            return upload_version(account, conflict["id"], path)
     check(st, data)
-    print(data.decode())
+    return json.loads(data)["entries"][0]
+
+
+def upload_version(account, file_id, path):
+    if os.path.getsize(path) > 50 * 1024 * 1024:
+        die("50MB を超えるファイルは分割アップロードが要る（未対応）: " + path)
+    h, body = multipart({"name": os.path.basename(path)}, path)
+    st, _, data = call(account, "POST", UPLOAD + "/files/%s/content" % file_id, h, body)
+    check(st, data)
+    return json.loads(data)["entries"][0]
+
+
+def make_folder(account, parent_id, name, exist_ok=False):
+    body = json.dumps({"name": name, "parent": {"id": str(parent_id)}}).encode()
+    st, _, data = call(account, "POST", api_url("folders", None), {"Content-Type": "application/json"}, body)
+    if st == 409 and exist_ok:
+        conflict = json.loads(data).get("context_info", {}).get("conflicts", [])
+        conflict = conflict[0] if isinstance(conflict, list) and conflict else conflict
+        if isinstance(conflict, dict) and conflict.get("type") == "folder":
+            return conflict
+    check(st, data)
+    return json.loads(data)
+
+
+def list_items(account, folder_id, fields):
+    entries, offset = [], 0
+    while True:
+        q = [("fields", fields), ("limit", "1000"), ("offset", str(offset))]
+        st, _, data = call(account, "GET", api_url("folders/%s/items" % folder_id, q))
+        check(st, data)
+        page = json.loads(data)
+        got = page.get("entries", [])
+        entries.extend(got)
+        offset += len(got)
+        if not got or offset >= page.get("total_count", 0):
+            return entries
+
+
+def out(obj):
+    json.dump(obj, sys.stdout, ensure_ascii=False, indent=1)
+    sys.stdout.write("\n")
+
+
+def cmd_upload(a):
+    out(upload_file(a.account, a.folder_id, a.src, a.name, a.overwrite))
 
 
 def cmd_upload_version(a):
-    if os.path.getsize(a.src) > 50 * 1024 * 1024:
-        die("50MB を超えるファイルは分割アップロードが要る（未対応）")
-    h, body = multipart({"name": os.path.basename(a.src)}, a.src)
-    st, _, data = call(a.account, "POST", UPLOAD + "/files/%s/content" % a.file_id, h, body)
-    check(st, data)
-    print(data.decode())
+    out(upload_version(a.account, a.file_id, a.src))
+
+
+def cmd_items(a):
+    out(list_items(a.account, a.folder_id, a.fields))
+
+
+def cmd_mkdir(a):
+    out(make_folder(a.account, a.parent_id, a.name, a.exist_ok))
+
+
+def cmd_upload_dir(a):
+    """手元のフォルダを、同じ名前のフォルダとして parent の下へ丸ごと上げる。"""
+    def walk(local, parent):
+        folder = make_folder(a.account, parent, os.path.basename(local.rstrip("/")), exist_ok=True)
+        have = {e["name"]: e for e in list_items(a.account, folder["id"], "type,id,name")}
+        for name in sorted(os.listdir(local)):
+            if name.startswith("."):
+                continue
+            path = os.path.join(local, name)
+            if os.path.isdir(path):
+                walk(path, folder["id"])
+            elif name in have and not a.overwrite:
+                continue
+            else:
+                upload_file(a.account, folder["id"], path, name, a.overwrite)
+        return folder
+    out(walk(a.src, a.parent_id))
 
 
 def main(argv):
@@ -426,8 +504,21 @@ def main(argv):
         return cmd_download(a)
     if cmd == "upload":
         p.add_argument("folder_id"); p.add_argument("src"); p.add_argument("--name")
+        p.add_argument("--overwrite", action="store_true")
         a = p.parse_args(rest[1:]); a.account = account
         return cmd_upload(a)
+    if cmd == "items":
+        p.add_argument("folder_id"); p.add_argument("--fields", default="type,id,name")
+        a = p.parse_args(rest[1:]); a.account = account
+        return cmd_items(a)
+    if cmd == "mkdir":
+        p.add_argument("parent_id"); p.add_argument("name"); p.add_argument("--exist-ok", action="store_true")
+        a = p.parse_args(rest[1:]); a.account = account
+        return cmd_mkdir(a)
+    if cmd == "upload-dir":
+        p.add_argument("parent_id"); p.add_argument("src"); p.add_argument("--overwrite", action="store_true")
+        a = p.parse_args(rest[1:]); a.account = account
+        return cmd_upload_dir(a)
     if cmd == "upload-version":
         p.add_argument("file_id"); p.add_argument("src")
         a = p.parse_args(rest[1:]); a.account = account
