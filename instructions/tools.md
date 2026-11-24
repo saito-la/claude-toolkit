@@ -1,10 +1,10 @@
 ## Box ファイルへのアクセス
 
-Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず Box CLI（`box files:get` / `box files:download`）を使う**。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
+Box URL（`*.app.box.com/file/<ID>`）が提示されたら **WebFetch は使わず `box-api`（`tools/box-api`）で読む**（`box-api <アカウント> get files/<ID>`・`box-api <アカウント> download <ID> <保存先>`）。WebFetch は OAuth2 認証を通れずログインページにリダイレクトされて失敗する。docx 等はダウンロード後に `pandoc -t markdown` で読む。
 
-**複数の Box アカウントは `box-as <環境名> <サブコマンド...>`（`scripts/box-as`）で使い分ける。** Box CLI の既定環境を一時的に切り替えて1回だけ実行し、終わったら元へ戻す（ロックで直列化）。`box configure:environments:set-current` で既定を切り替えたまま放置しない。環境が無い機では止まり、別アカウントの結果を黙って返さない。環境の追加は `box login --default-box-app --name <環境名>`（ブラウザでのログインは本人の操作）。個人環境では `box-nho`・`box-utokyo` 等のラッパーがこれを呼ぶ。
+**Box は `box-api <アカウント> <コマンド>` で扱い、アカウントを毎回名指しする。** 設定済みのアカウントは `box-api accounts` で見る。使い方の正本は `tools/box-api/README.md`。共有の「既定のアカウント」を持たず、トークンはアカウントごとのファイルにあるので、同時に動かしてもよく、ssh からも動く。アカウントの追加は `box-api login <アカウント>`（テナントに OAuth 2.0 の Platform App が要る）。
 
-**box は1台の Mac で同時に2つ動かさない。** Box CLI 4.x（macOS）は、起動時に Keychain の環境設定を読めないと全環境を空で上書きし、書き込みは削除と追加の2手で行う。並行に動くと一方の書き込みの隙間で他方が起動し、全環境が消える（2026-11-24 に実際に起きた）。`scripts/box-locked` を `~/bin/box` に配線し、素の `box` も `box-as` も全プロセス共通の flock の下で直列に動かす。ロックを取れなければ実行せずに止まる。
+Box CLI（`box`・`box-as`）は新しく使わない。2026-11-24 に、並行に動いた Box CLI が全環境の設定を空で上書きした（Keychain の1項目に全環境を置き、読めないと初期値で上書きし、書き込みは削除と追加の2手で行うため）。box-api が無く Box CLI しか無い環境で使うときは、`scripts/box-locked` を `~/bin/box` に配線し、全プロセスを1つずつ動かす。
 
 ## Dropbox へのアクセス
 
