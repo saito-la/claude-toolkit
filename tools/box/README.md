@@ -24,6 +24,7 @@ box は共有の「既定」を持たず、アカウントごとに別のファ�
 
 - 設定とトークンは `~/.config/box/<アカウント>.json`（権限 600、ディレクトリは 700）に置く。中身は client_id・client_secret・refresh_token・access_token・期限。書き込みは一時ファイルからの rename で、途中で落ちても壊れない
 - アクセストークンは期限の5分前に自動で更新する。Box の refresh_token は使い捨てで、使うと新しいものに替わり、古い方は無効になる。更新はアカウントごとのロック（macOS・Linux は flock、Windows は msvcrt.locking）の下で1プロセスずつ行い、待っていた側は更新済みのトークンを使う。ロックは持ち主のプロセスが終われば外れる
+- TLS の検証には OS が信頼する証明書を使う。Windows の Python は OS のストアを読むが、macOS の Python はキーチェーンを読まないので、システムのキーチェーンの証明書を足す。`NODE_EXTRA_CA_CERTS` があればそれも足す。TLS を再署名する網（HOSPnet の Cisco Umbrella）では、再署名に使う root CA を MDM がキーチェーンに入れているので、これが無いと `CERTIFICATE_VERIFY_FAILED` で落ちる（2026-11-26、`311C4M005`）。利用者が `SSL_CERT_FILE` を設定する必要はない
 - 401 は1回だけ更新してやり直す。429・5xx は Retry-After に従って待ち、やり直す
 - refresh_token は60日使わないと失効する。そのときは `login` で入り直す
 - 同じアカウントを複数の Mac で使うときは、Mac ごとに `login` する。ファイルを写して共用すると、片方の更新でもう片方の refresh_token が無効になる

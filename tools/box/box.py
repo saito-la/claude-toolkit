@@ -43,6 +43,8 @@ import json
 import mimetypes
 import os
 import secrets
+import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -156,9 +158,63 @@ class AccountLock:
 
 # ---- HTTP ---------------------------------------------------------------------
 
+_SSL_CONTEXT = None
+_MAC_KEYCHAINS = ("/System/Library/Keychains/SystemRootCertificates.keychain",
+                  "/Library/Keychains/System.keychain")
+
+
+def load_pem_bundle(ctx, pem):
+    """PEM の束を1件ずつ読む。読めない1件があっても残りは読む。"""
+    begin, end = "-----BEGIN CERTIFICATE-----", "-----END CERTIFICATE-----"
+    for block in pem.split(end):
+        i = block.find(begin)
+        if i < 0:
+            continue
+        try:
+            ctx.load_verify_locations(cadata=block[i:] + end + "\n")
+        except (ssl.SSLError, ValueError):
+            pass
+
+
+def ssl_context():
+    """OS が信頼する証明書で検証する文脈を作る。
+
+    TLS を再署名する網（病院の Cisco Umbrella など）では、再署名に使う root CA を
+    MDM が OS の証明書ストアへ入れている。Windows の Python は create_default_context で
+    OS のストアを読むので通るが、macOS の Python（python.org 版・uv 版）は キーチェーンを
+    読まず、自前の束（/etc/ssl/cert.pem や certifi）だけで検証して落ちる（2026-11-26、
+    311C4M005 で CERTIFICATE_VERIFY_FAILED）。macOS ではシステムのキーチェーンの証明書を
+    足す。Node 向けに NODE_EXTRA_CA_CERTS を置いた端末では、それも足す。
+    """
+    global _SSL_CONTEXT
+    if _SSL_CONTEXT is not None:
+        return _SSL_CONTEXT
+    ctx = ssl.create_default_context()
+    if sys.platform == "darwin" and os.path.exists("/usr/bin/security"):
+        try:
+            r = subprocess.run(["/usr/bin/security", "find-certificate", "-a", "-p"]
+                               + [k for k in _MAC_KEYCHAINS if os.path.exists(k)],
+                               capture_output=True, text=True, timeout=60)
+            load_pem_bundle(ctx, r.stdout)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    extra = os.environ.get("NODE_EXTRA_CA_CERTS")
+    if extra and os.path.isfile(extra):
+        try:
+            with open(extra, encoding="utf-8", errors="replace") as f:
+                load_pem_bundle(ctx, f.read())
+        except OSError:
+            pass
+    _SSL_CONTEXT = ctx
+    return ctx
+
+
 def http_request(method, url, headers=None, body=None, allow_redirect=True):
     req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
-    opener = urllib.request.build_opener() if allow_redirect else urllib.request.build_opener(NoRedirect)
+    handlers = [urllib.request.HTTPSHandler(context=ssl_context())]
+    if not allow_redirect:
+        handlers.append(NoRedirect)
+    opener = urllib.request.build_opener(*handlers)
     try:
         with opener.open(req, timeout=300) as r:
             return r.status, dict(r.headers), r.read()
