@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# AI（Claude Code）が操作する Chrome を、人が使う Chrome と分けて起動・操作する（macOS）。
+# AI（Claude Code）が操作する Chrome・Edge を、人が使うブラウザと分けて起動・操作する（macOS）。
+# プロファイルは ~/.config/claude-chrome/ に保存して使い回す（拡張と Cookie を残す。使い捨てのプロファイルを作らない）。
 # 設計・プロファイルの設定・アイコンの正本は同じフォルダの README.md。install.py が ~/.local/bin/claude-chrome に置く。
 #
 # 使い方（--<呼び名> は ~/.config/claude-chrome/profiles.conf の1列目。省くと1行目のプロファイル）:
@@ -11,7 +12,8 @@
 #   claude-chrome [--<呼び名>] release [--match <正規表現>] [targetId...]
 #                                             自分が開いたタブを閉じ、中身のあるタブが1枚も残らなければ Chrome も終了する。
 #                                             無人のスクリプトは終わりに必ずこれを通す（finally / trap）。規則は release.mjs 冒頭
-#   claude-chrome [--<呼び名>] stop           終了（残っているタブを問わず落とす）
+#   claude-chrome [--<呼び名>] stop           終了（残っているタブを問わず落とす。プロファイルは消さない）
+#   claude-chrome [--<呼び名>] port           CDP のポートだけを出力する（スクリプトが接続先を設定から引く用）
 #   claude-chrome profiles                    設定されたプロファイルと起動の有無
 set -euo pipefail
 
@@ -19,7 +21,7 @@ HERE="$(cd "$(dirname "$(realpath "$0")")" && pwd)"
 BASE="$HOME/.config/claude-chrome"
 CONF="${CLAUDE_CHROME_CONF:-$BASE/profiles.conf}"
 
-# profiles.conf の行（呼び名 フォルダ ポート 帯の文字 帯の色）。# で始まる行と空行は読まない
+# profiles.conf の行（呼び名 フォルダ ポート 帯の文字 帯の色 [ブラウザ]）。# で始まる行と空行は読まない
 rows() { [ -f "$CONF" ] && grep -v -E '^[[:space:]]*(#|$)' "$CONF" || true; }
 
 ROW=""
@@ -33,11 +35,17 @@ elif [ -n "${CLAUDE_CHROME_PROFILE:-}" ]; then
 else
   ROW="$(rows | head -1)"
 fi
-read -r _ DIR PORT_C LABEL_C COLOR_C <<<"$ROW" || true
+read -r _ DIR PORT_C LABEL_C COLOR_C BROWSER_C <<<"$ROW" || true
 PROFILE="${CLAUDE_CHROME_PROFILE:-$BASE/${DIR:-profile}}"
 PORT="${CLAUDE_CHROME_PORT:-${PORT_C:-9222}}"
 LABEL="${CLAUDE_CHROME_LABEL:-${LABEL_C:-$(basename "$PROFILE")}}"
 COLOR="${CLAUDE_CHROME_COLOR:-${COLOR_C:-#5F6368}}"
+case "${CLAUDE_CHROME_BROWSER:-${BROWSER_C:-chrome}}" in
+  chrome) APP="Google Chrome" ;;
+  edge)   APP="Microsoft Edge" ;;
+  *) echo "ブラウザは chrome か edge: ${BROWSER_C}" >&2; exit 2 ;;
+esac
+APP_PATH="/Applications/${APP}.app"
 
 cdp_up() { curl -s -m 2 "http://127.0.0.1:${PORT}/json/version" >/dev/null 2>&1; }
 
@@ -74,7 +82,7 @@ give_back_front() {  # give_back_front <回数>   0.5 秒おきに見て、Chrom
     now="$(front_pid)"
     if [ -n "$now" ] && [ "$now" != "$PREV_FRONT" ]; then
       name="$(osascript -e "tell application \"System Events\" to return name of first application process whose unix id is $now" 2>/dev/null || true)"
-      [ "$name" = "Google Chrome" ] &&
+      [ "$name" = "$APP" ] &&
         osascript -e "tell application \"System Events\" to set frontmost of (first application process whose unix id is $PREV_FRONT) to true" >/dev/null 2>&1
     fi
     sleep 0.5
@@ -84,13 +92,10 @@ give_back_front() {  # give_back_front <回数>   0.5 秒おきに見て、Chrom
 # Dock と Cmd+Tab のアイコンを「AI の印＋プロファイルの帯」に差し替える。プロセスが終わると元に戻るので、start のたびに掛ける。
 # 失敗しても起動は止めない（見た目だけの機能のため）。
 apply_icon() {
-  local png="$BASE/icons/$(printf '%s' "$LABEL $COLOR" | tr -cd 'A-Za-z0-9._-').png"
+  local png="$BASE/icons/$(printf '%s' "$APP $LABEL $COLOR" | tr -cd 'A-Za-z0-9._-').png"
   if [ ! -s "$png" ]; then
     mkdir -p "$(dirname "$png")"
-    local tmp; tmp=$(mktemp -d)
-    sips -s format png -Z 1024 "/Applications/Google Chrome.app/Contents/Resources/app.icns" --out "$tmp/base.png" >/dev/null 2>&1 &&
-      osascript -l JavaScript "$HERE/icon/make-icon.js" "$tmp/base.png" "$png" "$LABEL" "$COLOR" >/dev/null 2>&1
-    rm -rf "$tmp"
+    osascript -l JavaScript "$HERE/icon/make-icon.js" "$APP_PATH" "$png" "$LABEL" "$COLOR" >/dev/null 2>&1
   fi
   [ -s "$png" ] && node "$HERE/icon/set-dock-tile.mjs" "$PORT" "$png" >/dev/null 2>&1 ||
     echo "アイコンを差し替えられませんでした（起動には影響なし）" >&2
@@ -98,13 +103,14 @@ apply_icon() {
 
 start() {
   if cdp_up; then ensure_tab; apply_icon; return 0; fi
+  [ -d "$APP_PATH" ] || { echo "$APP_PATH がありません" >&2; return 1; }
   mkdir -p "$PROFILE"
   [ "${FOREGROUND:-0}" = 1 ] || save_front  # open（人がログインする）のときは前面に出したままにする
   # 実体を直接起動せず open で起動する。ssh のセッションから実体を起動すると GUI のセッションの外の Chrome になり、
   # キーチェーンにある Cookie の鍵を読めない。open なら launchd の子として起動する（2026-11-11 確認）。
   # -g は前面に出さない指定だが、Chrome は自分で前に出る（give_back_front が戻す）
   local bg=-g; [ "${FOREGROUND:-0}" = 1 ] && bg=
-  open $bg -n -a "Google Chrome" --args \
+  open $bg -n -a "$APP" --args \
     --user-data-dir="$PROFILE" \
     --remote-debugging-port="$PORT" \
     --no-first-run --no-default-browser-check \
@@ -137,7 +143,7 @@ case "${1:-status}" in
     url="${2:?URL を指定してください}"
     if cdp_up; then
       # 同じ user-data-dir で起動し直すと、走っているインスタンスにタブが渡る
-      open -na "Google Chrome" --args --user-data-dir="$PROFILE" "$url"
+      open -na "$APP" --args --user-data-dir="$PROFILE" "$url"
     else
       FOREGROUND=1 start "$url"
     fi
@@ -159,6 +165,9 @@ for t in json.load(sys.stdin):
     if t["type"] == "page":
         print(t["url"])'
     ;;
+  port)
+    echo "$PORT"
+    ;;
   stop)
     # 末尾を区切る。区切らないと profile の stop が profile-xxx の Chrome まで落とす
     pkill -f -- "--user-data-dir=${PROFILE}( |\$)" || true
@@ -167,14 +176,14 @@ for t in json.load(sys.stdin):
   profiles)
     [ -f "$CONF" ] || { echo "$CONF がありません。既定（$BASE/profile・CDP 9222）だけを使います"; exit 0; }
     first=1
-    rows | while read -r n d p l c; do
+    rows | while read -r n d p l c b; do
       st="停止"; curl -s -m 1 "http://127.0.0.1:${p}/json/version" >/dev/null 2>&1 && st="起動中"
-      echo "--$n  $BASE/$d  CDP $p  帯「${l}」$c  $st$([ $first = 1 ] && echo '  （既定）')"
+      echo "--$n  ${b:-chrome}  $BASE/$d  CDP $p  帯「${l}」$c  $st$([ $first = 1 ] && echo '  （既定）')"
       first=0
     done
     ;;
   *)
-    sed -n '2,15p' "$(realpath "$0")"
+    sed -n '2,18p' "$(realpath "$0")"
     exit 1
     ;;
 esac

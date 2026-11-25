@@ -1,14 +1,15 @@
-// Chrome のアイコンに「AI 用」の印とプロファイル名の帯を重ねた PNG を作る。
-// 使い方: osascript -l JavaScript make-icon.js <元PNG> <出力PNG> <帯の文字> <帯の色 #RRGGBB>
+// ブラウザ（Chrome・Edge）のアイコンに「AI 用」の印とプロファイル名の帯を重ねた PNG を作る。
+// 使い方: osascript -l JavaScript make-icon.js <アプリ> <出力PNG> <帯の文字> <帯の色 #RRGGBB>
+//   <アプリ> は /Applications/Google Chrome.app のようなアプリのパス。アイコンは Finder と同じものを OS から取る
 // macOS に最初から入っている JXA で描くので、Xcode の Command Line Tools が無い端末でも動く。
 // 呼び出し元は claude-chrome.sh（README.md「アイコン」）。
 ObjC.import('AppKit');
 
 function run(argv) {
-  if (argv.length !== 4) throw new Error('usage: make-icon.js <in.png> <out.png> <label> <#RRGGBB>');
-  const [inPath, outPath, label, hex] = argv;
-  const base = $.NSImage.alloc.initWithContentsOfFile(inPath);
-  if (base.isNil()) throw new Error(`元の画像を読めません: ${inPath}`);
+  if (argv.length !== 4) throw new Error('usage: make-icon.js <app> <out.png> <label> <#RRGGBB>');
+  const [app, outPath, label, hex] = argv;
+  if (!$.NSFileManager.defaultManager.fileExistsAtPath(app)) throw new Error(`アプリがありません: ${app}`);
+  const base = $.NSWorkspace.sharedWorkspace.iconForFile(app);
 
   const S = 1024;
   const rep = $.NSBitmapImageRep.alloc

@@ -7,11 +7,11 @@
 
 ### 1.1. 何をするか
 
-AI（Claude Code）がブラウザを操作するための Chrome を、人が使う Chrome と分けて起動・操作する macOS の呼び出し口。`install.py` が `~/.local/bin/claude-chrome` に置く。
+AI（Claude Code）がブラウザを操作するための Chrome と Microsoft Edge を、人が使うブラウザと分けて起動・操作する macOS の呼び出し口。`install.py` が `~/.local/bin/claude-chrome` に置く。
 
-- プロファイルは `~/.config/claude-chrome/<フォルダ>` に置く。端末ごとに番号が変わる Chrome の「Profile 3」に頼らず、どの Mac でも同じパスになる
+- プロファイルは `~/.config/claude-chrome/<フォルダ>` に保存して使い回す（3.2節）。端末ごとに番号が変わる Chrome の「Profile 3」に頼らず、どの Mac でも同じパスになる
 - 専用の user-data-dir なので、remote debugging（CDP）が使える。既定の user-data-dir では Chrome 136 以降これが拒否される（`DevTools remote debugging requires a non-default data directory`）。Playwright は `chromium.connectOverCDP('http://127.0.0.1:<ポート>')` で後から接続し、プロファイルをロックしないので、人が開いたタブと自動の処理が同居できる
-- Dock と Cmd+Tab のアイコンに「AI」の印とプロファイル名の帯を付け、人が使う Chrome と、プロファイルどうしを見分けられるようにする（4節）
+- Dock と Cmd+Tab のアイコンに「AI」の印とプロファイル名の帯を付け、人が使うブラウザと、プロファイルどうしを見分けられるようにする（4節）
 
 ### 1.2. 使う場面
 
@@ -28,41 +28,55 @@ claude-chrome tab <URL>                  # 前面へ出さずにタブを開き�
 claude-chrome tabs                       # 開いているタブの URL
 claude-chrome release [--match <正規表現>] [targetId...]   # 後始末（6節）
 claude-chrome status                     # CDP に応答するか
-claude-chrome stop                       # 終了
+claude-chrome stop                       # 終了（プロファイルは消さない）
+claude-chrome --<呼び名> port            # CDP のポートだけを出す（スクリプトが接続先を設定から引く）
 claude-chrome profiles                   # 設定されたプロファイルと起動の有無
 ```
 
 Playwright からは、`start` の後に `connectOverCDP` で接続する。新しいタブは `ctx.newPage()` ではなく、CDP の `Target.createTarget` に `background: true` を付けて開く（5節）。
 
-## 3. プロファイルの設定
+## 3. プロファイル
 
-`~/.config/claude-chrome/profiles.conf` に、1行に1つの Chrome を書く。列は空白で区切り、`#` で始まる行は読まない。書き方の見本は [profiles.conf.example](profiles.conf.example)。
+### 3.1. 設定
+
+`~/.config/claude-chrome/profiles.conf` に、1行に1つのブラウザのインスタンスを書く。列は空白で区切り、`#` で始まる行は読まない。書き方の見本は [profiles.conf.example](profiles.conf.example)。
 
 ```
-# 呼び名   フォルダ          CDPポート  帯の文字  帯の色
+# 呼び名   フォルダ          CDPポート  帯の文字  帯の色    ブラウザ
 work      profile           9222      Work      #D97757
 private   profile-private   9223      Private   #1A73E8
+ms        edge-work         9224      Work      #0F6CBD  edge
 ```
 
 - 呼び名：`claude-chrome --<呼び名>` で選ぶ名前
 - フォルダ：`~/.config/claude-chrome/` の下の user-data-dir。1つのフォルダには1つの Google アカウント（組織）だけをログインさせる
 - CDP ポート：プロファイルごとに変える
 - 帯の文字・帯の色：アイコンの下の帯（4節）。文字に空白は使えない
+- ブラウザ：`chrome`（省いたときの既定）か `edge`。Microsoft のサインインで「管理されたデバイス」を求める組織のサイトは、Intune の入った Mac の Edge なら通る（Chrome は通らない）
 
 ファイルが無ければ、`~/.config/claude-chrome/profile`・ポート 9222 だけを使い、帯はフォルダ名を灰色で出す。
 
 どのアカウントをどの呼び名にするかは使い手ごとに違うので、このリポジトリには置かない。配布する側の非公開のリポジトリに置き、そこから `~/.config/claude-chrome/profiles.conf` へリンクを張る。
 
-環境変数 `CLAUDE_CHROME_PROFILE`（フォルダの絶対パス）・`CLAUDE_CHROME_PORT`・`CLAUDE_CHROME_LABEL`・`CLAUDE_CHROME_COLOR` は、`--<呼び名>` を付けないときに設定より優先する。`CLAUDE_CHROME_PROFILE` だけを渡したときは、そのフォルダの行のポートと帯を使う。`CLAUDE_CHROME_CONF` で設定ファイルの場所を変えられる。
+環境変数 `CLAUDE_CHROME_PROFILE`（フォルダの絶対パス）・`CLAUDE_CHROME_PORT`・`CLAUDE_CHROME_LABEL`・`CLAUDE_CHROME_COLOR`・`CLAUDE_CHROME_BROWSER` は、`--<呼び名>` を付けないときに設定より優先する。`CLAUDE_CHROME_PROFILE` だけを渡したときは、そのフォルダの行のポートと帯を使う。`CLAUDE_CHROME_CONF` で設定ファイルの場所を変えられる。
+
+### 3.2. 保存して使い回す
+
+AI 用のプロファイルは、使い捨てにせず保存して使い回す。拡張（`chrome://extensions`・`edge://extensions` から入れたもの）、Cookie とログイン、サイトごとの許可がプロファイルに残り、次の起動でそのまま使える。
+
+- 処理のたびに一時フォルダ（`mktemp`・`$TMPDIR`・scratchpad など）に user-data-dir を作らない。その場で作ったプロファイルは拡張もログインも持たず、人にログインを頼み直すことになる
+- 新しい用途も、同じアカウントなら既存の行を使う。別のアカウント（組織）が要るときだけ `profiles.conf` に行を足す
+- `stop`・`release` は Chrome を終わらせるだけで、プロファイルは消さない。Chrome を終了してもログインは残る
+- 自前でブラウザを起動しているスクリプトも、`claude-chrome --<呼び名> start` と `port` で起動と接続先をこの設定に寄せる
 
 ## 4. アイコン
 
-AI 用の Chrome は人が使う Chrome と同じ `Google Chrome.app` から起動するので、何もしないと Dock と Cmd+Tab に同じアイコンが並ぶ。`start` は起動のたびに、CDP の `Browser.setDockTile` でそのプロセスのアイコンを差し替える。
+AI 用のブラウザは人が使うものと同じ `Google Chrome.app`・`Microsoft Edge.app` から起動するので、何もしないと Dock と Cmd+Tab に同じアイコンが並ぶ。`start` は起動のたびに、CDP の `Browser.setDockTile` でそのプロセスのアイコンを差し替える。
 
-- 左上の「AI」の丸が AI 用の印で、人が使う Chrome には付かない
+- 左上の「AI」の丸が AI 用の印で、人が使うブラウザには付かない。下地はそのブラウザのアイコンなので、Chrome と Edge も見分けられる
 - 下の帯がプロファイルで、`profiles.conf` の帯の文字と色で描く
-- 画像は [icon/make-icon.js](icon/make-icon.js) が Chrome の `app.icns` から作り、`~/.config/claude-chrome/icons/` に置く。macOS に最初から入っている JXA（`osascript -l JavaScript`）で描くので、Xcode の Command Line Tools が無い端末でも作れる。差し替えは [icon/set-dock-tile.mjs](icon/set-dock-tile.mjs)
-- 差し替えはプロセスが終わるまで有効。Chrome を起動し直したら `start` で掛け直す（起動済みでも `start` を呼べば掛かる）。Cmd+Tab の名前は「Google Chrome」のままで、変えられるのはアイコンだけ
+- 画像は [icon/make-icon.js](icon/make-icon.js) がアプリのアイコン（Finder と同じもの）から作り、`~/.config/claude-chrome/icons/` に置く。macOS に最初から入っている JXA（`osascript -l JavaScript`）で描くので、Xcode の Command Line Tools が無い端末でも作れる。差し替えは [icon/set-dock-tile.mjs](icon/set-dock-tile.mjs)
+- 差し替えはプロセスが終わるまで有効。Chrome を起動し直したら `start` で掛け直す（起動済みでも `start` を呼べば掛かる）。Cmd+Tab の名前は「Google Chrome」「Microsoft Edge」のままで、変えられるのはアイコンだけ
 - 帯の文字か色を変えると、新しい画像を作る。同じ文字と色のまま描き方だけを変えたときは、`icons/` の古い画像を消す
 
 `Google Chrome.app` を `~/Applications/` へ複製して別のアプリにする案は採らない。複製は署名が有効なまま動くが、起動した複製が Google Updater に自分を Chrome の本体として登録し直し、`/Applications/Google Chrome.app` が更新の対象から外れる（2026-10-16 実測。`~/Library/Application Support/Google/GoogleUpdater/prefs.json` の `ecp` と `pv_path` が複製を指した）。Info.plist を書き換えて名前も変える案は、署名が合わなくなり、キーチェーンの「Chrome Safe Storage」へのアクセスの確認が Chrome の更新のたびに出る。
@@ -84,8 +98,8 @@ macOS では全ウィンドウを閉じても Chrome のプロセスが残り、
 ## 7. 前提と制約
 
 - macOS 専用（`open`・`osascript`・`sips`・Dock を使う）。`install.py` は Windows には置かない
-- Google Chrome が `/Applications/Google Chrome.app` にあること
+- ブラウザが `/Applications/Google Chrome.app`・`/Applications/Microsoft Edge.app` にあること
 - Node.js 22 以降（組み込みの `WebSocket` と `fetch` を使う）と python3
 - ssh のセッションからも起動できる。実体を直接起動せず `open` で起動するので、GUI のセッションの Chrome になり、保存済みのログインを読める
-- `--load-extension` は効かない。拡張は、起動した窓の `chrome://extensions` から手で入れる
+- `--load-extension` は効かない。拡張は、起動した窓の `chrome://extensions`（Edge は `edge://extensions`）から手で入れる。プロファイルに残るので、入れるのは1回でよい
 - ログイン（Cookie）は Mac ごとに別で、同期しない。Mac ごとに1回ログインする

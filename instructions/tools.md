@@ -94,7 +94,7 @@ gcal-* MCP で `location` を設定するときは裸のURLのみを入れる。
 
 ## AI 用 Chrome の起動
 
-macOS で Claude がブラウザを起動して操作するときは、Chrome を独自の引数で起動せず `claude-chrome`（`~/.local/bin/claude-chrome`。使い方は claude-toolkit の `tools/claude-chrome/README.md`）で起動し、CDP で接続する。人の Chrome と分かれ、Dock のアイコンに AI の印とプロファイル名が付く。使えるプロファイルは `claude-chrome profiles` で見る。
+macOS で Claude がブラウザ（Chrome・Edge）を起動して操作するときは、独自の引数で起動せず `claude-chrome`（`~/.local/bin/claude-chrome`。使い方は claude-toolkit の `tools/claude-chrome/README.md`）で起動し、CDP で接続する。人のブラウザと分かれ、Dock のアイコンに AI の印とプロファイル名が付く。プロファイルは保存して使い回し（拡張と Cookie を残すため）、一時フォルダに使い捨てのプロファイルを作らない。使えるプロファイルは `claude-chrome profiles` で見る。
 
 ## ブラウザのタブの後始末
 

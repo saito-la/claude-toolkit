@@ -16,7 +16,7 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const EMPTY_TAB = /^(about:blank|chrome:\/\/newtab\/?|chrome:\/\/new-tab-page\/?)$/;
+const EMPTY_TAB = /^(about:blank|(chrome|edge):\/\/(newtab|new-tab-page)\/?)$/; // Edge の新しいタブは edge://newtab
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function pages(port) {
