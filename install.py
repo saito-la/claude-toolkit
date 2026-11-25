@@ -28,7 +28,7 @@
   instructions/*.md              → ~/.claude/instructions/
   scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
   hooks/*.sh・hooks/*.py          → ~/.claude/hooks/（完了通知・見出しの検査。hooks/README.md）
-  tools/box/box.py               → ~/.local/bin/box（Windows は box.cmd）。Box API の呼び出し口（tools/box/README.md）
+  tools/box/box.py               → ~/.local/bin/box（Windows は box.cmd と Git Bash 用の box）。Box API の呼び出し口（tools/box/README.md）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
   settings.json の Stop・UserPromptSubmit
                                  → Webhook を設定した端末だけ、完了通知が未登録なら追記
@@ -285,6 +285,9 @@ def place_box(root: Path, dry: bool, quiet: bool):
     ~/.local/bin は Claude Code の導入先と同じで、macOS・Windows とも PATH に載っている。
     呼び出し側のスクリプトもこのパスを直接呼ぶ（launchd などは PATH に ~/.local/bin を持たないため）。
     macOS・Linux は symlink、Windows は本スクリプトを動かした Python で box.py を呼ぶ box.cmd。
+    Windows には Git Bash 用の拡張子なしの box（sh）も置く。Git Bash は `box` を box.cmd に結び付けず、
+    Claude Code は Windows でもコマンドの多くを Git Bash で流すため（2026-11-26、311C4W991 で Box CLI を外したら
+    Git Bash から `box: command not found` になった。それまでは Box CLI の npm の sh が `box` を引き受けていた）。
     Box CLI（npm の @box/cli）も `box` の名前を使うので、PATH で先に見つかれば知らせる。
     """
     src = root / "tools" / "box" / "box.py"
@@ -303,6 +306,11 @@ def place_box(root: Path, dry: bool, quiet: bool):
             # cmd.exe はバッチを ANSI のコードページで読む。ユーザー名が日本語でもパスが化けないようにそろえる
             if not dest.exists() or dest.read_text(encoding="mbcs") != body:
                 dest.write_text(body, encoding="mbcs", newline="")
+            sh_dest = bindir / "box"
+            sh_body = f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "{src.as_posix()}" "$@"\n'
+            # Git Bash はスクリプトを UTF-8 で読む
+            if not sh_dest.exists() or sh_dest.read_text(encoding="utf-8") != sh_body:
+                sh_dest.write_text(sh_body, encoding="utf-8", newline="")
         else:
             if dest.is_symlink() or not dest.exists():
                 if not (dest.is_symlink() and Path(os.readlink(dest)) == src):
@@ -317,7 +325,7 @@ def place_box(root: Path, dry: bool, quiet: bool):
         log(f"⚠️  box の配置に失敗しました（スキップして続行）: {e}", quiet)
         return
     found = shutil.which("box")
-    if found and Path(found).resolve() != dest.resolve():
+    if found and Path(found).resolve() not in (dest.resolve(), (bindir / "box").resolve()):
         log(f"⚠️  PATH で先に見つかる box は {found} です。Box CLI なら外してください（npm uninstall -g @box/cli）。"
             f"同じ名前なので、Claude が box を呼ぶと Box CLI が動きます", quiet)
     elif not found:

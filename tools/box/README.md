@@ -42,7 +42,7 @@ box は共有の「既定」を持たず、アカウントごとに別のファ�
 
 ### 3.2. 置き場
 
-`install.py` が `~/.local/bin/box` に置く（macOS・Linux は symlink、Windows は box.py を呼ぶ `box.cmd`）。`~/.local/bin` は Claude Code の導入先と同じで PATH に載っている。launchd など PATH の違う所から呼ぶスクリプトは、このパスを直接書く。
+`install.py` が `~/.local/bin/box` に置く（macOS・Linux は symlink、Windows は box.py を呼ぶ `box.cmd` と、Git Bash 用の拡張子なしの `box`）。`~/.local/bin` は Claude Code の導入先と同じで PATH に載っている。launchd など PATH の違う所から呼ぶスクリプトは、このパスを直接書く。
 
 ### 3.3. ログイン
 
