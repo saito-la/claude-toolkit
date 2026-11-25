@@ -1,0 +1,6 @@
+# claude-chrome のプロファイル。~/.config/claude-chrome/profiles.conf に置く（書き方は README.md「プロファイルの設定」）。
+# 1行が1つの Chrome。列は空白で区切り、1行目が既定（--<呼び名> を省いたとき）になる。
+#
+# 呼び名   フォルダ（~/.config/claude-chrome/ の下）  CDPポート  帯の文字  帯の色
+work      profile                                     9222      Work      #D97757
+private   profile-private                             9223      Private   #1A73E8

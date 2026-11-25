@@ -134,6 +134,7 @@ Skill（自動発見）ではなく、個別にセットアップして使うツ
 | ツール | 内容 |
 |---|---|
 | [orca](tools/orca/README.md) | 複数のエージェントを並べて動かす Orca の入れ方（管理者権限の無い Mac・Windows を含む）・画面での設定・リポジトリの登録。秘書の bot（Orca Bots）の作り方とスマホからのつなぎ方は [bots.md](tools/orca/bots.md) |
+| [claude-chrome](tools/claude-chrome/README.md) | AI が操作する Chrome を人の Chrome と分けて起動する macOS の口（`~/.local/bin/claude-chrome`）。CDP で接続でき、Dock のアイコンに AI の印とプロファイル名が付く |
 | [dropbox-mcp](tools/dropbox-mcp/README.md) | Dropbox の MCP サーバーの自前実装。ダウンロードはディスクへ保存し、会話にはパス・サイズ・sha256 だけを返す |
 | [statusline](tools/statusline/README.md) | Claude Codeのターミナル下部に使用状況（コンテキスト・レート制限・作業フォルダ・アカウント）を表示 |
 | [gmail-message-id-bookmarklet](tools/gmail-message-id-bookmarklet/README.md) | Gmailで開いているメールのMessage-IDをクリップボードにコピーするブックマークレット（Claudeにメールを一意に伝えるため） |

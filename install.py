@@ -29,6 +29,8 @@
   scripts/*.py                   → ~/.claude/scripts/（規約が名指しで呼ぶもの）
   hooks/*.sh・hooks/*.py          → ~/.claude/hooks/（完了通知・見出しの検査。hooks/README.md）
   tools/box/box.py               → ~/.local/bin/box（Windows は box.cmd と Git Bash 用の box）。Box API の呼び出し口（tools/box/README.md）
+  tools/claude-chrome/claude-chrome.sh
+                                 → ~/.local/bin/claude-chrome（macOS のみ）。AI が操作する Chrome の起動口（tools/claude-chrome/README.md）
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
   settings.json の Stop・UserPromptSubmit
                                  → Webhook を設定した端末だけ、完了通知が未登録なら追記
@@ -330,6 +332,36 @@ def place_box(root: Path, dry: bool, quiet: bool):
             f"同じ名前なので、Claude が box を呼ぶと Box CLI が動きます", quiet)
     elif not found:
         log(f"⚠️  {bindir} が PATH にありません。box を名前で呼ぶには PATH に足してください", quiet)
+
+
+def place_claude_chrome(root: Path, dry: bool, quiet: bool):
+    """tools/claude-chrome/claude-chrome.sh を `claude-chrome` の名前で ~/.local/bin に symlink で置く（macOS のみ）。
+
+    Dock・open・osascript を使う macOS 専用の道具なので、ほかの OS では何もしない。
+    プロファイルの設定（~/.config/claude-chrome/profiles.conf）は使い手ごとに違うので、ここでは置かない。
+    """
+    if platform.system() != "Darwin":
+        return
+    src = root / "tools" / "claude-chrome" / "claude-chrome.sh"
+    if not src.is_file():
+        return
+    bindir = Path.home() / ".local" / "bin"
+    dest = bindir / "claude-chrome"
+    if dry:
+        log(f"（dry-run）{dest} に claude-chrome を置く", quiet)
+        return
+    try:
+        bindir.mkdir(parents=True, exist_ok=True)
+        if dest.is_symlink() or not dest.exists():
+            if not (dest.is_symlink() and Path(os.readlink(dest)) == src):
+                if dest.is_symlink():
+                    dest.unlink()
+                dest.symlink_to(src)
+            src.chmod(src.stat().st_mode | 0o111)
+        else:
+            log(f"⚠️  {dest} は別のファイルなので claude-chrome を置きませんでした（中身を確かめてください）", quiet)
+    except OSError as e:
+        log(f"⚠️  claude-chrome の配置に失敗しました（スキップして続行）: {e}", quiet)
 
 
 def _place_executables(root: Path, name: str, suffixes, mode: str, plan: Plan, dry: bool, quiet: bool):
@@ -748,6 +780,7 @@ def main() -> int:
     place_hooks(root, a.mode, plan, a.dry_run, a.quiet)
     has_sl = place_statusline(root, a.mode, plan, a.dry_run, a.quiet)
     place_box(root, a.dry_run, a.quiet)
+    place_claude_chrome(root, a.dry_run, a.quiet)
     remove_orphans(plan, prev, root, a.dry_run, a.quiet)
     sync_llm_wiki(a.mode, a.dry_run, a.quiet)
     if not a.no_settings and has_sl:
