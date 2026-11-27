@@ -7,12 +7,13 @@ instructions/tools.md「ブラウザのタブの後始末」を機械で支え�
 - 対象のブラウザは、起動中のプロセスの引数から引く。`--remote-debugging-port=<N>` と、
   `--user-data-dir` に CLAUDE_CHROME_DIR_MATCH（既定 `claude-chrome`）を含む Chrome。ポートと
   プロファイルの一覧はこのスクリプトに持たない
-- PreToolUse（Bash）：コマンドが AI 用 Chrome を触る形跡（claude-chrome・connectOverCDP・
-  remote-debugging-port・/json/new・Target.createTarget・対象のポート番号）を持つときだけ、
-  その時点のタブの targetId を記録する
-- PostToolUse／PostToolUseFailure：その呼び出しのあいだに現れたタブを「このセッションが開いたタブ」に足す
-- Stop：このセッションが開いたタブのうち、まだ残っているものだけを数える。ほかのセッションや人が
-  開いたタブ、hook の出力・CLAUDE.md・会話の文面は判定に使わない
+- Bash の PreToolUse でタブの targetId を記録し、PostToolUse／PostToolUseFailure で、その呼び出しの
+  あいだに現れたタブを「このセッションが開いたタブ」とする。コマンドの文面では絞らない
+  （スキルの CLI や、Claude が書いて `node x.mjs` で走らせるスクリプトは文面に印を持たないため）
+- 並行するほかのセッションの Bash の実行と時間が重なった呼び出しでは、どちらが開いたか分からない。
+  そのときは、自分のコマンドが AI 用 Chrome を触る印（TRACE・対象のポート番号）を持つ場合だけ自分のものとする。
+  実行の時間帯はセッションをまたいで WINDOWS_DIR に記録する
+- Stop：このセッションが開いたタブのうち、まだ残っているものだけを数える。会話の記録は読まない
 - 残りがあれば decision "block" で Claude に閉じさせる。返答が隠れないよう、閉じた後に直前の
   返答を載せ直すよう求める。同じタブの組には1回しか言わず、再入（stop_hook_active）では止めない
 - SessionStart など上記以外のイベントでは何もしない（旧版の登録が残っていても害が無い）
@@ -23,11 +24,13 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 
 DIR_MATCH = os.environ.get("CLAUDE_CHROME_DIR_MATCH", "claude-chrome")
-STATE_DIR = os.environ.get("TMPDIR", "/tmp")
-TRACE = re.compile(r"claude-chrome|connectOverCDP|remote-debugging-port|/json/new|Target\.createTarget")
+STATE_DIR = os.path.expanduser(os.environ.get("BROWSER_TAB_CHECK_DIR", "~/.cache/browser-tab-check"))
+TRACE = re.compile(r"claude-chrome|connectOverCDP|remote-debugging-port|/json/new|Target\.createTarget|playwright|puppeteer")
+STALE = 3600  # これより古い記録は、落ちたセッションの残骸として捨てる
 
 
 def chrome_ports():
@@ -52,9 +55,9 @@ def pages(port):
         return None
 
 
-def snapshot(ports=None):
+def snapshot(ports):
     snap = {}
-    for p in chrome_ports() if ports is None else ports:
+    for p in ports:
         ts = pages(p)
         if ts is not None:
             snap[str(p)] = [t["id"] for t in ts]
@@ -65,75 +68,106 @@ def safe(s):
     return re.sub(r"[^A-Za-z0-9_-]", "_", str(s))
 
 
-def state_path(sid, kind, extra=""):
-    return os.path.join(STATE_DIR, f"browser-tab-check-{kind}-{safe(sid)}{('-' + safe(extra)) if extra else ''}.json")
+def path(kind, sid, extra=""):
+    return os.path.join(STATE_DIR, f"{kind}-{safe(sid)}{('-' + safe(extra)) if extra else ''}.json")
 
 
-def load(path):
+def load(p):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(p, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
 
 
-def save(path, obj):
+def save(p, obj):
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        tmp = f"{p}.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(obj, f)
+        os.replace(tmp, p)
     except OSError:
         pass
 
 
-def remove(path):
+def remove(p):
     try:
-        os.remove(path)
+        os.remove(p)
     except OSError:
         pass
 
 
-def touches_browser(tool_input):
-    text = json.dumps(tool_input, ensure_ascii=False) if not isinstance(tool_input, str) else tool_input
-    if TRACE.search(text):
-        return True
-    return any(re.search(rf":{p}(?!\d)", text) for p in chrome_ports())
+def touches_browser(tool_input, ports):
+    text = tool_input if isinstance(tool_input, str) else json.dumps(tool_input, ensure_ascii=False)
+    return bool(TRACE.search(text)) or any(re.search(rf":{p}(?!\d)", text) for p in ports)
+
+
+def overlapped(sid, start, end):
+    """ほかのセッションの Bash の実行が [start, end] と重なったか。"""
+    now = time.time()
+    for p in glob.glob(os.path.join(STATE_DIR, "pre-*.json")) + glob.glob(os.path.join(STATE_DIR, "done-*.json")):
+        w = load(p)
+        if not w:
+            continue
+        s, e = w.get("start", 0), w.get("end") or now
+        if now - s > STALE:
+            remove(p)
+            continue
+        if w.get("sid") != sid and s <= end and e >= start:
+            return True
+    return False
 
 
 def attribute(sid, pre_path):
     """pre の記録から今までに現れたタブを、このセッションのものとして足す。"""
-    before = load(pre_path)
+    w = load(pre_path)
     remove(pre_path)
-    if before is None:
+    if not w:
         return
-    now = snapshot()
-    mine = load(state_path(sid, "mine")) or {}
+    end = time.time()
+    save(path("done", sid, w.get("id", "x")), {"sid": sid, "start": w["start"], "end": end})
+    if overlapped(sid, w["start"], end) and not w.get("trace"):
+        return
+    now = snapshot(chrome_ports())
+    mine = load(path("mine", sid)) or {}
     for p, ids in now.items():
-        new = [i for i in ids if i not in before.get(p, [])]
+        new = [i for i in ids if i not in w["tabs"].get(p, [])]
         if new:
             mine[p] = sorted(set(mine.get(p, [])) | set(new))
-    save(state_path(sid, "mine"), mine)
+    save(path("mine", sid), mine)
+
+
+def prune():
+    """終わったセッションの記録（mine・told）を1日で捨てる。"""
+    for p in glob.glob(os.path.join(STATE_DIR, "*.json")):
+        try:
+            if time.time() - os.path.getmtime(p) > 86400:
+                os.remove(p)
+        except OSError:
+            pass
 
 
 def on_stop(data, sid):
-    for pre in glob.glob(os.path.join(STATE_DIR, f"browser-tab-check-pre-{safe(sid)}-*.json")):
+    prune()
+    for pre in glob.glob(os.path.join(STATE_DIR, f"pre-{safe(sid)}-*.json")):
         attribute(sid, pre)  # PostToolUse が来なかった呼び出し（中断など）の分
-    mine = load(state_path(sid, "mine")) or {}
+    mine = load(path("mine", sid)) or {}
     if not mine:
         return
     left, alive = [], {}
     for p, ids in mine.items():
-        ts = pages(int(p)) or []
-        still = [t for t in ts if t["id"] in ids]
+        still = [t for t in pages(int(p)) or [] if t["id"] in ids]
         if still:
             alive[p] = [t["id"] for t in still]
             left += [(p, t) for t in still]
-    save(state_path(sid, "mine"), alive)
+    save(path("mine", sid), alive)
     if not left:
         return
     key = sorted(t["id"] for _, t in left)
-    if load(state_path(sid, "told")) == key or data.get("stop_hook_active"):
+    if load(path("told", sid)) == key or data.get("stop_hook_active"):
         return
-    save(state_path(sid, "told"), key)
+    save(path("told", sid), key)
     lines = [f"  ポート {p}：{(t.get('title') or '')[:40]}　{(t.get('url') or '')[:80]}　(id {t['id']})" for p, t in left]
     reason = (
         "このセッションのツール呼び出しで AI 操作用の Chrome に開いたタブが残っています：\n" + "\n".join(lines)
@@ -153,13 +187,17 @@ def main():
         return
     sid = data.get("session_id", "x")
     event = data.get("hook_event_name", "")
+    tid = data.get("tool_use_id", "x")
+    if data.get("tool_name") not in (None, "Bash"):
+        return
     if event == "PreToolUse":
-        if data.get("tool_name") == "Bash" and touches_browser(data.get("tool_input") or {}):
-            save(state_path(sid, "pre", data.get("tool_use_id", "x")), snapshot())
+        ports = chrome_ports()
+        save(path("pre", sid, tid), {
+            "sid": sid, "id": tid, "start": time.time(), "tabs": snapshot(ports),
+            "trace": touches_browser(data.get("tool_input") or {}, ports),
+        })
     elif event in ("PostToolUse", "PostToolUseFailure"):
-        pre = state_path(sid, "pre", data.get("tool_use_id", "x"))
-        if os.path.exists(pre):
-            attribute(sid, pre)
+        attribute(sid, path("pre", sid, tid))
     elif event == "Stop":
         on_stop(data, sid)
 
