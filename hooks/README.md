@@ -296,34 +296,42 @@ osascript -e 'do shell script "install -d -m 755 /etc/codex && install -m 644 '"
 
 ## AI 用 Chrome の残りタブの検査
 
-`browser-tab-check.py` は `instructions/tools.md`「ブラウザのタブの後始末」を機械で支える。SessionStart と Stop で呼ぶ。
+`browser-tab-check.py` は `instructions/tools.md`「ブラウザのタブの後始末」を機械で支える。Bash の PreToolUse・PostToolUse・PostToolUseFailure と Stop で呼ぶ。
 
 ### 仕組み
 
 - 対象のブラウザは、起動中のプロセスの引数から引く。`--remote-debugging-port=<N>` を持ち、`--user-data-dir` に `claude-chrome` を含む Chrome。ポートとプロファイルの一覧はスクリプトに持たない（含める語は環境変数 `CLAUDE_CHROME_DIR_MATCH` で変えられる）
-- SessionStart で、その時点のタブの targetId をセッションごとに一時ファイルへ記録する（基準）。Stop で、基準に無いタブ（開始後に現れたタブ）を数える
-- そのセッションが AI 用 Chrome を使った形跡（記録に `claude-chrome`・`connectOverCDP`・`remote-debugging-port`・対象のポート）が無ければ何もしない。使っていないセッションに他人のタブを言わないため
-- 残りがあれば decision "block" で、タブの一覧と後始末の決まりを Claude に返す。同じタブの組には1回しか言わない
-- 自動では閉じない。「どのセッションが開いたタブか」はフックから確定できず、人に見せるために開いたタブやほかのセッションのタブを巻き込むため。閉じるかどうかは Claude が決める
+- Bash のコマンドが AI 用 Chrome を触る形跡（`claude-chrome`・`connectOverCDP`・`remote-debugging-port`・`/json/new`・`Target.createTarget`・対象のポート番号）を持つときだけ、実行の前後でタブの targetId を比べ、そのあいだに現れたタブを「このセッションが開いたタブ」として一時ファイルに記録する
+- Stop では、このセッションが開いたタブのうち残っているものだけを数える。ほかのセッションや人が開いたタブは数えない。会話の記録（hook の出力・CLAUDE.md・ユーザーの発言・ツールの結果）は判定に使わない
+- 残りがあれば decision "block" で、タブの一覧と後始末の決まりを Claude に返す。focus mode ではターンの最後の発言しか見えないため、後始末の後の最後の発言に直前の返答を載せ直すよう求める。同じタブの組には1回しか言わず、再入（`stop_hook_active`）では止めない
+- 自動では閉じない。人に見せるために開いたタブを巻き込むため。閉じるかどうかは Claude が決める
 
 ### 経緯
 
 2026-11-18、AI 用 Chrome が出しっぱなしになっていた（UTokyo 側に2枚、Private 側に1枚。どれも CDP に接続中のプロセスが無かった）。tools.md の決まりは 11/14 から入っていたが、その後のセッションが守っていなかったため、文章に加えて機械の歯止めを入れた。
 
+2026-11-27、ブラウザを使っていないセッションで毎ターン block されていた。旧版は「使った形跡」を会話の記録の全文から探していたため、フック自身の block の文面（ポート番号を含む）や CLAUDE.md の取り込みで当たり、基準も SessionStart 時点のタブとの差分だったため、並行するほかのセッションのタブを数えていた。block のたびに Claude の返答がタブの一言に置き換わり、focus mode では本来の返答が見えなくなった。判定をこのセッションの Bash の呼び出しの前後の差分に改めた。
+
 ### 限界
 
-- 基準は SessionStart の時点なので、同時に動いているほかのセッションが開いたタブも「開始後に現れたタブ」に入る。一覧を見て自分のものだけ閉じる前提
+- AI 用 Chrome を触る Bash の実行中に、並行するほかのセッションがタブを開くと、それもこのセッションのものとして数える
+- `run_in_background` で走らせた処理が、呼び出しの戻った後に開いたタブは拾えない
+- コマンドに上の形跡を含まないスクリプト（スキルの CLI など）が開いたタブは拾えない。その分は、スクリプト側で終わりに必ず通す共通の後始末（自分が開いたタブを閉じ、中身のあるタブが残らなければ Chrome を終了する）で塞いだ。launchd・メール自動処理など無人で動くスクリプトも同じ
 - タブが0枚のまま Chrome が残る状態（macOS で全ウィンドウを閉じた後）は検出しない
-- フックは Claude のセッションの Stop でしか見ないので、launchd・メール自動処理など無人で動くスクリプトが残したタブは拾えない。その分は、スクリプト側で終わりに必ず通す共通の後始末（自分が開いたタブを閉じ、中身のあるタブが残らなければ Chrome を終了する）で塞いだ
-- 登録より前から開いているセッションには基準が無く、全タブが対象になる
 
 ### 登録
 
-全プロジェクトに効かせるため、ユーザーの `~/.claude/settings.json` に足す。
+全プロジェクトに効かせるため、ユーザーの `~/.claude/settings.json` に足す。旧版の SessionStart の登録は要らない（残っていても何もしない）。
 
 ```json
-"SessionStart": [
-  { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+"PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+],
+"PostToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
+],
+"PostToolUseFailure": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
 ],
 "Stop": [
   { "hooks": [ { "type": "command", "command": "f=\"$HOME/.claude/hooks/browser-tab-check.py\"; [ -f \"$f\" ] || exit 0; python3 \"$f\"" } ] }
