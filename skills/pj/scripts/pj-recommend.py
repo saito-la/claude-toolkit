@@ -40,7 +40,10 @@ CACHE = CACHE_DIR / "index.json"
 INDEX_VERSION = 2
 
 MAXDEPTH = 5            # find -maxdepth 5 相当（PROJECTS からのディレクトリ深さ）
-PRUNE_DIRS = {"node_modules", "__pycache__"}
+# reference / vendor は他者のリポジトリの読むだけの写しで、その AGENTS.md は作業を起こす場所の印ではない
+PRUNE_DIRS = {"node_modules", "__pycache__", "reference", "vendor"}
+# プロジェクトの指示ファイル。AGENTS.md が正本で、CLAUDE.md は移行前のプロジェクトのために読む
+INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 
 PURPOSE_HEADS = ("目的", "このフォルダ", "このディレクトリ", "概要", "purpose", "about")
 BOUNDARY_HEADS = ("切り分け", "使い分け", "scope", "何を置", "境界")
@@ -59,7 +62,7 @@ MINE_STOPWORDS = {
 
 
 def find_claude_mds():
-    """~/Projects 配下の CLAUDE.md を列挙（隠しディレクトリ・node_modules等は除外）。
+    """~/Projects 配下のプロジェクトの指示ファイル（AGENTS.md、無ければ CLAUDE.md）を列挙（隠しディレクトリ・node_modules等は除外）。
 
     同じディレクトリに .pjignore があれば除外する。テンプレートの配布物や編集用
     ワークスペースのように、CLAUDE.md はあるが「Claude Code で作業を起こす場所」
@@ -74,8 +77,11 @@ def find_claude_mds():
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in PRUNE_DIRS]
         if depth >= MAXDEPTH:
             dirs[:] = []
-        if "CLAUDE.md" in files and ".pjignore" not in files:
-            out.append(pathlib.Path(root) / "CLAUDE.md")
+        if ".pjignore" in files:
+            continue
+        name = next((n for n in INSTRUCTION_FILES if n in files), None)
+        if name:
+            out.append(pathlib.Path(root) / name)
     return out
 
 

@@ -5,7 +5,7 @@
   python3 orca-register-projects.py --dry-run  # 登録するものを表示するだけ
   <一覧を出すコマンド> | python3 orca-register-projects.py --stdin
 
-登録する一覧は、既定では pj の索引（skills/pj の pj-recommend.py list。CLAUDE.md のある
+登録する一覧は、既定では pj の索引（skills/pj の pj-recommend.py list。AGENTS.md（移行前は CLAUDE.md）のある
 フォルダ）を git リポジトリの最上位にまとめたもの。別の一覧を使うなら --stdin で
 ~/Projects からの相対パスを1行1件で渡す。この Mac に clone されていないもの、登録済みの
 ものは飛ばすので、何度実行してもよい。

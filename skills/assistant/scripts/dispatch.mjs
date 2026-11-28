@@ -15,7 +15,7 @@
  *
  * 開くのは設定の pjLinks.openに --prompt-file を付けたもの。
  * 新しい iTerm2 のウィンドウでそのプロジェクトの worktree に claude が起動し、依頼文を最初の指示として受け取る。
- * 振り分けの決まりの正本はインスタンスの CLAUDE.md「指示の振り分け」。
+ * 振り分けの決まりの正本はインスタンスの AGENTS.md（移行前は CLAUDE.md）「指示の振り分け」。
  */
 import { readFileSync, writeFileSync, mkdtempSync, fstatSync } from 'fs';
 import { execFileSync } from 'child_process';

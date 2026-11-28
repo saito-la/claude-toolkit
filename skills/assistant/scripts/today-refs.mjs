@@ -42,11 +42,11 @@ export function refsOf(text) {
   return out;
 }
 
-// 台帳を持つプロジェクト＝台帳から上へたどって最初に CLAUDE.md があるディレクトリ
+// 台帳を持つプロジェクト＝台帳から上へたどって最初に指示ファイル（AGENTS.md、移行前は CLAUDE.md）があるディレクトリ
 export function projectOf(path) {
   let dir = dirname(path);
   while (dir && dir !== '.') {
-    if (existsSync(`${PROJECTS}/${dir}/CLAUDE.md`)) return dir;
+    if (['AGENTS.md', 'CLAUDE.md'].some((n) => existsSync(`${PROJECTS}/${dir}/${n}`))) return dir;
     dir = dirname(dir);
   }
   return path.split('/')[0];

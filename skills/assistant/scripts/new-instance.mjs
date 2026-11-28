@@ -6,7 +6,7 @@
  *
  * 書くもの（すでにあるファイルは上書きせず、飛ばしたと出す）：
  *   assistant.json          設定。workDoc.id・logDoc.id は空で書く。使い手が文書を作って埋めるまで、使うスクリプトは項目の名前を出して止まる
- *   CLAUDE.md               インスタンスの説明。pj の索引と Orca の一覧に載るために要る
+ *   AGENTS.md               インスタンスの説明（Claude Code・Codex・agy が読む）。pj の索引と Orca の一覧に載るために要る
  *   .gitignore              data/ を外す。today.md は入れる。Orca などの git の worktree で開くと git に入ったファイルしか無く、
  *                           入れないと作業場ごとに前回の today.md が消えるため。見せられない件名が混ざるなら使い手が外す
  *   .claude/settings.json   開始時の収集のフック
@@ -45,7 +45,7 @@ const files = {
     gmail: { account, credential, sentExcludeSubjects: [] },
     features: {},
   }, null, 2) + '\n',
-  'CLAUDE.md': `# planner
+  'AGENTS.md': `# planner
 
 秘書の仕組みのインスタンス。各プロジェクトの台帳（\`action-items.md\`）・作業用の文書・予定表・Gmail を読み、その日にやることを並べた today.md を作る。
 
