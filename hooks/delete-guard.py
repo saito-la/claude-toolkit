@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse（Bash）：守る場所（既定は ~/Projects）のファイルを直接消すコマンドを止め、dedup-rm へ回す。
+"""PreToolUse（Bash）：守る場所（既定は ~/Projects と Orca の作業場 ~/orca/workspaces）のファイルを直接消すコマンドを止め、dedup-rm へ回す。
 
 消してよいかの判定はしない。判定は ~/.claude/scripts/dedup-rm.py が、消すファイルそのものについて
 消す直前に行う。このフックの役目は、その判定を回り道されないようにすることだけ。
@@ -22,7 +22,7 @@ import shlex
 import sys
 
 HOME = os.path.expanduser("~")
-ROOTS = [os.path.abspath(os.path.expanduser(r)) for r in os.environ.get("CLAUDE_PROTECTED_ROOTS", "~/Projects").split(":") if r]
+ROOTS = [os.path.abspath(os.path.expanduser(r)) for r in os.environ.get("CLAUDE_PROTECTED_ROOTS", "~/Projects:~/orca/workspaces").split(":") if r]
 GENERATED = re.compile(r"(^|/)(\.DS_Store|~\$[^/]*|__pycache__(/.*)?|node_modules(/.*)?|[^/]*\.pyc|\.git/.*\.lock)$")
 OPS = {";", "&&", "||", "|", "&", "(", ")", "|&"}
 SSH_OPTS_WITH_ARG = set("bcDEeFIiJLlmOopQRSWw")
@@ -155,7 +155,7 @@ def main():
         hits = check(command, cwd)
     except (ValueError, StopIteration):
         # 引用符が閉じていない等で読めないときは、消すコマンドらしければ確認に回す
-        if re.search(r"(^|[\s;&|('\"])(rm|unlink|git\s+clean)\s", command) and any(r in command or "Projects" in command for r in ROOTS):
+        if re.search(r"(^|[\s;&|('\"])(rm|unlink|git\s+clean)\s", command) and any(r in command or r.replace(HOME, "~", 1) in command for r in ROOTS):
             print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                   "permissionDecisionReason": "削除を含むかもしれないコマンドを読み切れなかった。消すなら dedup-rm を使う"}}, ensure_ascii=False))
         return

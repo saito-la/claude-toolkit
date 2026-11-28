@@ -174,7 +174,7 @@ MCP の送信を検査するには、同じコマンドを `"matcher": "mcp__.*_
 ファイルを消す経路を `scripts/dedup-rm.py` の1本にし、`delete-guard.py` がそれ以外の経路を止める。部品はこの2つだけで、隔離・保管・台帳は持たない。
 
 - `dedup-rm.py`：渡したパスを、隠しファイルと gitignore されたものまで含めてファイル1つずつに展開し、ファイルごとに同じ中身がほかにあるかを消す直前に確かめる。比べる先は、上流へ push 済みの git の履歴、`--against` で指定した手元・別の端末のファイル、Google Drive・Box などが返すハッシュ。写しと生成物だけを消し、唯一の中身は残して一覧を出す。唯一の中身を消すのは、`--unique-ok` の TSV に1件ずつ「何か・消す理由・消してよい根拠」を書き、`--dry-run` で出した一覧をユーザーが見て承認したときだけ。使い方はスクリプトの冒頭
-- `delete-guard.py`：`PreToolUse`（`Bash`）で呼ぶ。守る場所（既定は `~/Projects`、環境変数 `CLAUDE_PROTECTED_ROOTS` で変える）の中を `rm`・`unlink`・`find -delete`・`git clean -f`・外への `mv`・`rsync --delete` で消すコマンドと、`unison -force` を `deny` で止め、dedup-rm を使うよう返す。`ssh` の先と `bash -c` の中も見る。生成物（`.DS_Store`・`~$*`・`__pycache__`・`node_modules`）と `.git` の中の `*.lock` は通す
+- `delete-guard.py`：`PreToolUse`（`Bash`）で呼ぶ。守る場所（既定は `~/Projects` と Orca の作業場 `~/orca/workspaces`、環境変数 `CLAUDE_PROTECTED_ROOTS` で変える）の中を `rm`・`unlink`・`find -delete`・`git clean -f`・外への `mv`・`rsync --delete` で消すコマンドと、`unison -force` を `deny` で止め、dedup-rm を使うよう返す。`ssh` の先と `bash -c` の中も見る。生成物（`.DS_Store`・`~$*`・`__pycache__`・`node_modules`）と `.git` の中の `*.lock` は通す
 
 ### 経緯
 
