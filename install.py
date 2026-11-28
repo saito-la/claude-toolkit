@@ -34,6 +34,7 @@
   settings.json の statusLine     → 未設定なら追記／本スクリプトが書いた値なら更新
   settings.json の Stop・UserPromptSubmit
                                  → Webhook を設定した端末だけ、完了通知が未登録なら追記
+  settings.json の pluginConfigs  → CLAUDE.md と AGENTS.md を両方読む設定が未設定なら追記
   llm-wiki-template（clone がある端末のみ）
                                  → pull、~/.claude/llm-wiki-template と ~/.claude/LLM-WIKI.md を張り直し、
                                    vault を現行の schema に合わせる（sync_llm_wiki）
@@ -544,6 +545,57 @@ def ensure_statusline_setting(dry: bool, quiet: bool):
     log(f"✅ settings.json の statusLine を{action}しました", quiet)
 
 
+AGENTS_MD_PLUGIN = "cc-plugin-agents-md@builtin"
+AGENTS_MD_MODE = "claude-md-and-agents-md"
+
+
+def ensure_agents_md_setting(dry: bool, quiet: bool):
+    """Claude Code に CLAUDE.md と AGENTS.md を両方読ませる設定を入れる。
+
+    プロジェクトの指示ファイルは AGENTS.md に移す（skills/agents-md-migrate）。Claude Code は既定では、
+    起動したフォルダとその上に CLAUDE.md が1つでもあると AGENTS.md を全部読まないので、移す途中や
+    CLAUDE.md が取り残されたときに指示が黙って落ちる。両方を読む設定でそれを防ぐ。各自が別の値を
+    入れていれば触らない。
+    """
+    path = CLAUDE / "settings.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        settings = {}
+    opts = settings.setdefault("pluginConfigs", {}).setdefault(AGENTS_MD_PLUGIN, {}).setdefault("options", {})
+    cur = opts.get("instructionFiles")
+    if cur == AGENTS_MD_MODE:
+        log("ℹ️  settings.json の AGENTS.md の読み方は設定済みです", quiet)
+        return
+    if cur is not None:
+        log(f"ℹ️  settings.json の AGENTS.md の読み方は各自の値（{cur}）のため変更しません", quiet)
+        return
+    if dry:
+        log("（dry-run）settings.json に CLAUDE.md と AGENTS.md を両方読む設定を追記します", quiet)
+        return
+    opts["instructionFiles"] = AGENTS_MD_MODE
+    path.write_text(json.dumps(settings, indent=2, ensure_ascii=False), encoding="utf-8")
+    log("✅ settings.json に CLAUDE.md と AGENTS.md を両方読む設定を追記しました", quiet)
+
+
+def notice_claude_md(quiet: bool):
+    """~/Projects に CLAUDE.md が残っていれば、AGENTS.md へ移すよう知らせる（移すのは各自の了承の後）。"""
+    root = Path.home() / "Projects"
+    if quiet or not root.is_dir():
+        return
+    skip = {"node_modules", "reference", "legacy", "vendor", "__pycache__"}
+    found = []
+    for d, dirs, files in os.walk(root):
+        dirs[:] = [x for x in dirs if not x.startswith(".") and x not in skip]
+        if "CLAUDE.md" in files:
+            found.append(Path(d) / "CLAUDE.md")
+    if found:
+        print()
+        print(f"📝 ~/Projects にプロジェクトの指示ファイル CLAUDE.md が {len(found)} 件あります。")
+        print("   AGENTS.md へ移すと Claude Code・Codex などが共通に読みます。Claude Code に")
+        print("   「指示ファイルを AGENTS.md に移して」と頼むと、計画を見せてから移します（/agents-md-migrate）。")
+
+
 NOTIFY_ENV = Path.home() / ".config" / "claude-chat-notify" / "webhook.env"
 NOTIFY_HOOKS = [("Stop", "notify-chat.sh"), ("UserPromptSubmit", "notify-chat-start.sh")]
 
@@ -787,6 +839,7 @@ def main() -> int:
         ensure_statusline_setting(a.dry_run, a.quiet)
     if not a.no_settings:
         ensure_notify_hooks(a.dry_run, a.quiet)
+        ensure_agents_md_setting(a.dry_run, a.quiet)
     if a.git_default_branch:
         ensure_git_default_branch(a.git_default_branch, a.dry_run, a.quiet)
 
@@ -828,6 +881,8 @@ def main() -> int:
     inst = [m for m in inst if m.name != "README.md"]
     if inst:
         ensure_claude_md(inst, a.dry_run)
+
+    notice_claude_md(a.quiet)
 
     if plan.failed:
         print()
