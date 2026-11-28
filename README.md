@@ -16,7 +16,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 | [copy-paste-output-format](conventions/copy-paste-output-format.md) | コピペ前提テキストの出力作法（URL単独行・`.txt`/`pbcopy`） |
 | [session-end-auto-file-move](conventions/session-end-auto-file-move.md) | セッション終了時のテンポラリファイル自動移動ポリシー |
 | [email-draft-conventions](conventions/email-draft-conventions.md) | メール返信下書きの起案作法（起案フロー・下書きの単一性・スレッドと引用・宛先の決め方・送信前の確認） |
-| [email-address-ledger](conventions/email-address-ledger.md) | 確認済みメールアドレスの索引の持ち方（既定はプロジェクトの `CLAUDE.md` に箇条書き・育てば CSV へ） |
+| [email-address-ledger](conventions/email-address-ledger.md) | 確認済みメールアドレスの索引の持ち方（既定はプロジェクトの `AGENTS.md` に箇条書き・育てば CSV へ） |
 | [case-record-single-location](conventions/case-record-single-location.md) | 案件（出張・イベント・治験など）の情報を1案件1フォルダに集める置き場の決め方 |
 | [secret-handling](conventions/secret-handling.md) | APIキー・トークン・パスワードを画面にもリポジトリにも出さない扱い方 |
 | [numbering-starts-at-one](conventions/numbering-starts-at-one.md) | 人が読む番号は1から始め、0番を作らない |
@@ -29,7 +29,7 @@ Claude Code用の汎用Skill・規約集。プロジェクト非依存のツー�
 
 - **`email-draft-conventions.md`（配布物）** — 返信の下書きを作るときの作法。誰にでも当てはまる部分だけが入っている。送信は本人の明示の指示があるときだけ・推敲で下書きを増やさない・引用を刈り込まない、といった規律
 - **`email-draft-conventions-local.md`（自分で作る）** — 自分の文体。宛名の敬称・挨拶・結び・署名・「初稿から何を削るか」。**このファイルは配布物に含まれない**ので、上流を `git pull` しても上書きされない
-- **`email-address-ledger.md`（配布物）** — 「誰のアドレスが何か」を確定するたびにプロジェクトの `CLAUDE.md` へ書き足す運用。メール検索は人名ではなくアドレスで絞らないと同姓同名・引用スニペットで取り違えるため
+- **`email-address-ledger.md`（配布物）** — 「誰のアドレスが何か」を確定するたびにプロジェクトの `AGENTS.md` へ書き足す運用。メール検索は人名ではなくアドレスで絞らないと同姓同名・引用スニペットで取り違えるため
 
 **使い込むほど価値が出るのは後者2つ**——つまり `-local` の文体ファイルと、各プロジェクトの台帳。ここが自分の資産として溜まる場所で、配布物側（この 2 ファイル）は誰が使っても同じ内容のまま更新されていく。
 
